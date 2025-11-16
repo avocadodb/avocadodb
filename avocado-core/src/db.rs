@@ -27,12 +27,32 @@ impl Database {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
 
-        // Enable foreign keys and WAL mode
-        conn.execute("PRAGMA foreign_keys = ON", [])?;
-        conn.execute("PRAGMA journal_mode = WAL", [])?;
+        // Run migrations (without PRAGMA statements)
+        let schema = include_str!("../../migrations/001_initial.sql");
+        // Split into CREATE statements only (skip PRAGMA lines)
+        for statement in schema.lines() {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with("--") && !trimmed.starts_with("PRAGMA") {
+                // Accumulate multi-line statements
+                continue;
+            }
+        }
 
-        // Run migrations
-        conn.execute_batch(include_str!("../../migrations/001_initial.sql"))?;
+        // Execute the schema without PRAGMAs
+        let schema_without_pragma = schema
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.starts_with("PRAGMA") && !trimmed.starts_with("-- Enable WAL")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        conn.execute_batch(&schema_without_pragma)?;
+
+        // Execute PRAGMAs separately (they return results)
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", true)?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
