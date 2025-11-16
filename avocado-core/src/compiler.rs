@@ -40,15 +40,22 @@ pub async fn compile(
     api_key: Option<&str>,
 ) -> Result<WorkingSet> {
     let start_time = std::time::Instant::now();
+    let mut last_checkpoint = start_time;
 
     // Step 1: Embed query
     let query_embedding = embedding::embed_text(query, api_key).await?;
+    log::debug!("Embed query: {}ms", last_checkpoint.elapsed().as_millis());
+    last_checkpoint = std::time::Instant::now();
 
     // Step 2: Semantic search
     let semantic_results = index.search(&query_embedding, 50)?;
+    log::debug!("Semantic search: {}ms", last_checkpoint.elapsed().as_millis());
+    last_checkpoint = std::time::Instant::now();
 
     // Step 3: Lexical search
     let lexical_results = lexical_search(query, db, 20)?;
+    log::debug!("Lexical search: {}ms", last_checkpoint.elapsed().as_millis());
+    last_checkpoint = std::time::Instant::now();
 
     // Step 4: Hybrid fusion
     let mut candidates = hybrid_fusion(
@@ -57,28 +64,43 @@ pub async fn compile(
         config.semantic_weight,
         config.lexical_weight,
     );
+    log::debug!("Hybrid fusion: {}ms", last_checkpoint.elapsed().as_millis());
+    last_checkpoint = std::time::Instant::now();
 
     // Step 5: MMR diversification (if enabled)
     if config.enable_mmr {
         candidates = apply_mmr(candidates, &query_embedding, config.mmr_lambda);
+        log::debug!("MMR diversification: {}ms", last_checkpoint.elapsed().as_millis());
+        last_checkpoint = std::time::Instant::now();
     }
 
     // Step 6: Pack into token budget
     let selected_spans = pack_token_budget(candidates, config.token_budget);
+    log::debug!("Token packing: {}ms", last_checkpoint.elapsed().as_millis());
+    last_checkpoint = std::time::Instant::now();
 
     // Step 7: Sort deterministically
     let sorted_spans = deterministic_sort(selected_spans);
+    log::debug!("Deterministic sort: {}ms", last_checkpoint.elapsed().as_millis());
+    last_checkpoint = std::time::Instant::now();
 
     // Step 8: Build context and citations
     let (context_text, citations) = build_context(&sorted_spans, db)?;
+    log::debug!("Build context: {}ms", last_checkpoint.elapsed().as_millis());
+    last_checkpoint = std::time::Instant::now();
+
+    // Count tokens
+    let tokens_used = count_tokens(&context_text);
+    log::debug!("Count tokens: {}ms", last_checkpoint.elapsed().as_millis());
 
     let compilation_time_ms = start_time.elapsed().as_millis() as u64;
+    log::info!("Total compilation time: {}ms", compilation_time_ms);
 
     Ok(WorkingSet {
         text: context_text.clone(),
         spans: sorted_spans,
         citations,
-        tokens_used: count_tokens(&context_text),
+        tokens_used,
         query: query.to_string(),
         compilation_time_ms,
     })
@@ -394,16 +416,20 @@ fn build_context(spans: &[Span], db: &Database) -> Result<(String, Vec<Citation>
     Ok((context_text, citations))
 }
 
-/// Count tokens in text using tiktoken-rs
+use std::sync::OnceLock;
+
+/// Cached tiktoken tokenizer for performance
+static TOKENIZER: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
+
+/// Count tokens in text using cached tiktoken-rs tokenizer
 fn count_tokens(text: &str) -> usize {
-    // Use tiktoken-rs for accurate counting (cl100k_base encoding for GPT-4/GPT-3.5)
-    match tiktoken_rs::cl100k_base() {
-        Ok(bpe) => bpe.encode_with_special_tokens(text).len(),
-        Err(_) => {
-            // Fallback to simple heuristic if tiktoken fails
-            (text.len() / 4).max(1)
-        }
-    }
+    // Use cached tiktoken tokenizer for accurate counting
+    let tokenizer = &TOKENIZER;
+    let bpe = tokenizer.get_or_init(|| {
+        tiktoken_rs::cl100k_base().expect("Failed to initialize tiktoken")
+    });
+
+    bpe.encode_with_special_tokens(text).len()
 }
 
 #[cfg(test)]
