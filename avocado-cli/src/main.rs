@@ -5,6 +5,7 @@
 use anyhow::Result;
 use avocado_core::{compiler, db::Database, embedding, index::VectorIndex, span, Artifact, CompilerConfig};
 use clap::{Parser, Subcommand};
+use sha2::Digest;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;

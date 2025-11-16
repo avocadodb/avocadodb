@@ -135,20 +135,57 @@ fn should_create_span(
         return true;
     }
 
-    // TODO: Add more sophisticated boundary detection here
-    // This is where you can implement smart heuristics for:
-    // - Code block detection
-    // - Section header detection
-    // - Sentence boundary detection
-    // - Target size optimization (30 lines is ideal)
+    // Detect markdown/RST section headers (good split points)
+    let is_header = is_section_header(line);
+    if is_header && num_lines >= 15 {
+        // Split before headers if we have enough content
+        return true;
+    }
+
+    // Detect code fence boundaries
+    let is_code_fence = line.trim().starts_with("```") || line.trim().starts_with("~~~");
+    if is_code_fence && num_lines >= 20 {
+        // Split at code block boundaries
+        return true;
+    }
+
+    // Ideal target size is 30 lines - split at next good boundary
+    if num_lines >= 30 {
+        // Look for natural boundaries
+        if line.trim().is_empty() || is_header || is_code_fence {
+            return true;
+        }
+
+        // If we're at 40+ lines and haven't found a boundary, force split
+        if num_lines >= 40 {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if a line looks like a section header
+fn is_section_header(line: &str) -> bool {
+    let trimmed = line.trim();
+
+    // Markdown headers: # Title, ## Title, etc.
+    if trimmed.starts_with('#') && trimmed.len() > 1 {
+        return true;
+    }
+
+    // ReStructuredText style headers: underlines with =, -, ~, etc.
+    if trimmed.len() > 2 && trimmed.chars().all(|c| c == '=' || c == '-' || c == '~' || c == '^') {
+        return true;
+    }
 
     false
 }
 
 /// Estimate token count for text
 ///
-/// Uses a simple heuristic (~4 chars per token) for quick estimation.
-/// For production, this should use tiktoken-rs for accurate counts.
+/// Uses tiktoken-rs for accurate token counting compatible with OpenAI models.
+/// Falls back to simple heuristic if tiktoken initialization fails.
 ///
 /// # Arguments
 ///
@@ -156,11 +193,16 @@ fn should_create_span(
 ///
 /// # Returns
 ///
-/// Estimated number of tokens
+/// Accurate token count
 fn estimate_tokens(text: &str) -> usize {
-    // Simple estimation: ~4 characters per token
-    // TODO: Replace with tiktoken-rs for accurate counting
-    (text.len() / 4).max(1)
+    // Use tiktoken-rs for accurate counting (cl100k_base encoding for GPT-4/GPT-3.5)
+    match tiktoken_rs::cl100k_base() {
+        Ok(bpe) => bpe.encode_with_special_tokens(text).len(),
+        Err(_) => {
+            // Fallback to simple heuristic if tiktoken fails
+            (text.len() / 4).max(1)
+        }
+    }
 }
 
 #[cfg(test)]

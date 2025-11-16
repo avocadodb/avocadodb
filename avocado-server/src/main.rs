@@ -6,11 +6,11 @@ use avocado_core::{compiler, db::Database, embedding, index::VectorIndex, span, 
 use axum::{
     extract::{Json, State},
     http::StatusCode,
-    response::IntoResponse,
     routing::{delete, get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use uuid::Uuid;

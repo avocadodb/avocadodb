@@ -17,7 +17,7 @@ use crate::db::Database;
 use crate::embedding;
 use crate::index::{cosine_similarity, VectorIndex};
 use crate::types::{Citation, CompilerConfig, Result, ScoredSpan, Span, WorkingSet};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Compile a context working set for a query
 ///
@@ -101,10 +101,8 @@ fn lexical_search(query: &str, db: &Database, limit: usize) -> Result<Vec<Scored
     let spans = db.search_spans(query, limit)?;
 
     // Simple scoring: count keyword matches
-    let keywords: HashSet<&str> = query
-        .to_lowercase()
-        .split_whitespace()
-        .collect();
+    let query_lower = query.to_lowercase();
+    let keywords: Vec<&str> = query_lower.split_whitespace().collect();
 
     let scored: Vec<ScoredSpan> = spans
         .into_iter()
@@ -199,7 +197,7 @@ fn hybrid_fusion(
 /// - How to handle spans without embeddings?
 fn apply_mmr(
     candidates: Vec<ScoredSpan>,
-    query_embedding: &[f32],
+    _query_embedding: &[f32],
     lambda: f32,
 ) -> Vec<ScoredSpan> {
     if candidates.is_empty() {
@@ -209,19 +207,55 @@ fn apply_mmr(
     let mut selected = Vec::new();
     let mut remaining = candidates;
 
-    // TODO: Implement MMR selection
-    // Algorithm:
-    // 1. Select first span (highest relevance)
-    // 2. For each remaining span:
-    //    a. Calculate relevance to query
-    //    b. Calculate max similarity to already selected spans
-    //    c. MMR score = lambda * relevance - (1-lambda) * max_similarity
-    // 3. Select span with highest MMR score
-    // 4. Repeat until we have enough spans or run out
+    // Select first span (highest relevance)
+    if let Some(first) = remaining.first() {
+        selected.push(first.clone());
+        remaining.remove(0);
+    }
 
-    // For now, just return the top 30 candidates
-    remaining.truncate(30);
-    remaining
+    // Iteratively select diverse spans using MMR
+    const TARGET_SPANS: usize = 30;
+
+    while !remaining.is_empty() && selected.len() < TARGET_SPANS {
+        let mut best_mmr_score = f32::NEG_INFINITY;
+        let mut best_idx = 0;
+
+        for (idx, candidate) in remaining.iter().enumerate() {
+            // Relevance to query (using original score from hybrid fusion)
+            let relevance = candidate.score;
+
+            // Calculate maximum similarity to already selected spans
+            let max_similarity = if let Some(ref candidate_emb) = candidate.span.embedding {
+                selected
+                    .iter()
+                    .filter_map(|selected_span: &ScoredSpan| {
+                        selected_span.span.embedding.as_ref().map(|selected_emb| {
+                            cosine_similarity(candidate_emb, selected_emb)
+                        })
+                    })
+                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .unwrap_or(0.0)
+            } else {
+                // If no embedding, treat as having zero similarity
+                0.0
+            };
+
+            // MMR score: balance relevance and diversity
+            // lambda = 1.0 means pure relevance (no diversity penalty)
+            // lambda = 0.0 means pure diversity (no relevance bonus)
+            let mmr_score = lambda * relevance - (1.0 - lambda) * max_similarity;
+
+            if mmr_score > best_mmr_score {
+                best_mmr_score = mmr_score;
+                best_idx = idx;
+            }
+        }
+
+        // Add the best span to selected and remove from remaining
+        selected.push(remaining.remove(best_idx));
+    }
+
+    selected
 }
 
 /// Pack spans into token budget using greedy selection
@@ -240,21 +274,47 @@ fn apply_mmr(
 /// - Should we always take the highest scored spans?
 /// - Or try to maximize token utilization with a knapsack approach?
 /// - How to handle very large spans that might waste budget?
-fn pack_token_budget(mut candidates: Vec<ScoredSpan>, budget: usize) -> Vec<ScoredSpan> {
-    // TODO: Implement smart packing algorithm
-    // Current: Simple greedy approach
-    // Could be enhanced with:
-    // - Skip very large spans if they waste too much budget
-    // - Try to fill gaps with smaller spans
-    // - Consider span importance vs size trade-off
-
+fn pack_token_budget(candidates: Vec<ScoredSpan>, budget: usize) -> Vec<ScoredSpan> {
     let mut selected = Vec::new();
     let mut total_tokens = 0;
 
+    // First pass: greedy selection of high-value spans
+    let mut remaining = Vec::new();
+
     for candidate in candidates {
-        if total_tokens + candidate.span.token_count <= budget {
-            total_tokens += candidate.span.token_count;
+        let span_tokens = candidate.span.token_count;
+
+        // Skip spans that are too large and would waste budget
+        // (e.g., a span that's >40% of budget might leave too much unused)
+        let remaining_budget = budget - total_tokens;
+        let waste_ratio = if remaining_budget > 0 {
+            (span_tokens as f32 - remaining_budget as f32) / budget as f32
+        } else {
+            1.0
+        };
+
+        if total_tokens + span_tokens <= budget {
+            total_tokens += span_tokens;
             selected.push(candidate);
+        } else if waste_ratio < 0.4 && span_tokens < budget {
+            // Might fit later, keep for second pass
+            remaining.push(candidate);
+        }
+    }
+
+    // Second pass: try to fill remaining budget with smaller spans
+    // This maximizes token utilization
+    let remaining_budget = budget.saturating_sub(total_tokens);
+
+    if remaining_budget > 0 {
+        // Sort remaining by size (smallest first) to fill gaps
+        remaining.sort_by_key(|s| s.span.token_count);
+
+        for candidate in remaining {
+            if total_tokens + candidate.span.token_count <= budget {
+                total_tokens += candidate.span.token_count;
+                selected.push(candidate);
+            }
         }
     }
 
@@ -334,10 +394,16 @@ fn build_context(spans: &[Span], db: &Database) -> Result<(String, Vec<Citation>
     Ok((context_text, citations))
 }
 
-/// Count tokens in text (simple estimate for Phase 1)
+/// Count tokens in text using tiktoken-rs
 fn count_tokens(text: &str) -> usize {
-    // TODO: Use tiktoken-rs for accurate counting
-    (text.len() / 4).max(1)
+    // Use tiktoken-rs for accurate counting (cl100k_base encoding for GPT-4/GPT-3.5)
+    match tiktoken_rs::cl100k_base() {
+        Ok(bpe) => bpe.encode_with_special_tokens(text).len(),
+        Err(_) => {
+            // Fallback to simple heuristic if tiktoken fails
+            (text.len() / 4).max(1)
+        }
+    }
 }
 
 #[cfg(test)]
