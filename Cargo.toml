@@ -1,0 +1,44 @@
+[workspace]
+members = ["avocado-core", "avocado-cli", "avocado-server"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["AvocadoDB Team"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/avocadodb/avocadodb"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+rusqlite = { version = "0.30", features = ["bundled"] }
+
+# HTTP client & server
+reqwest = { version = "0.11", features = ["json"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+sha2 = "0.10"
+parking_lot = "0.12"
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Token counting (for accurate token estimation)
+tiktoken-rs = "0.5"

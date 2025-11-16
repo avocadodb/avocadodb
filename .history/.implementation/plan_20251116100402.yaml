@@ -1,0 +1,690 @@
+# AvocadoDB Phase 1 - Multi-Agent Implementation Plan
+# This YAML defines parallel workstreams for autonomous agents to execute
+
+metadata:
+  project: AvocadoDB
+  phase: 1
+  version: 1.0.0
+  duration: 8_weeks
+  start_date: "2025-01-20"
+  objective: "Build deterministic context engine with drop-in RAG replacement"
+  success_metric: "5-minute integration with 50% hallucination reduction"
+
+# Global configuration all agents need
+global_config:
+  repository: "github.com/avocadodb/avocadodb"
+  language: rust
+  min_rust_version: "1.75.0"
+  database: sqlite
+  primary_branch: main
+  ci_pipeline: github_actions
+  
+  tech_stack:
+    core_engine: rust
+    cli: rust + clap
+    python_sdk: python + pyo3
+    typescript_sdk: typescript + wasm
+    embedding_provider: openai
+    testing: pytest + jest + cargo_test
+    docs: mdbook + docusaurus
+
+  conventions:
+    error_handling: "Result<T, Error> with thiserror"
+    logging: "tracing + tracing-subscriber"
+    serialization: "serde + serde_json"
+    async_runtime: "tokio"
+    database_orm: "sqlx"
+    http_server: "axum"
+
+# Agent roles and responsibilities
+agents:
+  - id: architect_agent
+    role: "System Architecture & Design"
+    responsibilities:
+      - Design core data structures
+      - Define API contracts
+      - Create system diagrams
+      - Review all technical decisions
+    
+  - id: database_agent
+    role: "Database Schema & Operations"
+    responsibilities:
+      - Design SQLite schema
+      - Implement migrations
+      - Create indexes
+      - Optimize queries
+    
+  - id: core_engine_agent
+    role: "Core Rust Engine Development"
+    responsibilities:
+      - Implement span extraction
+      - Build context compiler
+      - Create retrieval pipeline
+    
+  - id: embedding_agent
+    role: "Embedding & Vector Operations"
+    responsibilities:
+      - Implement embedding generation
+      - Build vector similarity search
+      - Create embedding cache
+    
+  - id: cli_agent
+    role: "CLI Tool Development"
+    responsibilities:
+      - Build CLI interface
+      - Implement commands
+      - Create progress indicators
+    
+  - id: python_sdk_agent
+    role: "Python SDK Development"
+    responsibilities:
+      - Build Python bindings
+      - Create pythonic API
+      - Write Python tests
+    
+  - id: typescript_sdk_agent
+    role: "TypeScript SDK Development"
+    responsibilities:
+      - Build TypeScript client
+      - Create type definitions
+      - Write TypeScript tests
+    
+  - id: api_agent
+    role: "REST API Development"
+    responsibilities:
+      - Design RESTful endpoints
+      - Implement HTTP server
+      - Create OpenAPI spec
+    
+  - id: testing_agent
+    role: "Testing & Quality Assurance"
+    responsibilities:
+      - Write unit tests
+      - Create integration tests
+      - Build benchmark suite
+      - Ensure determinism
+    
+  - id: docs_agent
+    role: "Documentation & Examples"
+    responsibilities:
+      - Write technical documentation
+      - Create tutorials
+      - Build example projects
+      - Design documentation site
+    
+  - id: devops_agent
+    role: "CI/CD & Infrastructure"
+    responsibilities:
+      - Setup GitHub Actions
+      - Configure release pipeline
+      - Create Docker images
+      - Setup benchmarking
+
+# Parallel workstreams with dependencies
+workstreams:
+
+  # WEEK 1-2: Foundation
+  foundation:
+    week: 1-2
+    parallel_tasks:
+      
+      - task_id: design_architecture
+        agent: architect_agent
+        priority: critical
+        deliverables:
+          - file: "docs/architecture/ARCHITECTURE.md"
+            content: |
+              - System overview
+              - Component diagram
+              - Data flow diagram
+              - API design
+              - Decision records
+          - file: "docs/architecture/DATA_MODEL.md"
+            content: |
+              - Span model design
+              - Artifact structure
+              - Working set schema
+              - Index strategy
+        dependencies: []
+        
+      - task_id: setup_repository
+        agent: devops_agent
+        priority: critical
+        deliverables:
+          - file: "Cargo.toml"
+            workspace: true
+            members:
+              - avocado-core
+              - avocado-cli
+              - avocado-server
+          - file: ".github/workflows/ci.yml"
+            content: "Build, test, lint pipeline"
+          - file: "Makefile"
+            targets: [build, test, lint, fmt, release]
+        dependencies: []
+        
+      - task_id: design_schema
+        agent: database_agent
+        priority: critical
+        deliverables:
+          - file: "migrations/001_initial_schema.sql"
+            tables:
+              - artifacts:
+                  columns:
+                    - "id TEXT PRIMARY KEY"
+                    - "path TEXT NOT NULL"
+                    - "content TEXT NOT NULL"
+                    - "content_hash TEXT NOT NULL"
+                    - "metadata JSONB"
+                    - "created_at TIMESTAMP"
+                    - "updated_at TIMESTAMP"
+              - spans:
+                  columns:
+                    - "id TEXT PRIMARY KEY"
+                    - "artifact_id TEXT REFERENCES artifacts(id)"
+                    - "start_line INTEGER NOT NULL"
+                    - "end_line INTEGER NOT NULL"
+                    - "text TEXT NOT NULL"
+                    - "embedding BLOB"
+                    - "embedding_model TEXT"
+                    - "token_count INTEGER"
+                    - "metadata JSONB"
+                  indexes:
+                    - "idx_spans_artifact_id ON spans(artifact_id)"
+                    - "idx_spans_embedding ON spans(embedding) USING vector"
+              - working_sets:
+                  columns:
+                    - "id TEXT PRIMARY KEY"
+                    - "query TEXT NOT NULL"
+                    - "query_embedding BLOB"
+                    - "token_budget INTEGER"
+                    - "compiled_context TEXT"
+                    - "span_ids JSONB"
+                    - "citations JSONB"
+                    - "metadata JSONB"
+                    - "created_at TIMESTAMP"
+          - file: "src/database/schema.rs"
+            content: "SQLx type-safe schema definitions"
+        dependencies: [design_architecture]
+
+  # WEEK 2-4: Core Engine
+  core_engine:
+    week: 2-4
+    parallel_tasks:
+      
+      - task_id: span_extractor
+        agent: core_engine_agent
+        priority: critical
+        deliverables:
+          - file: "avocado-core/src/span/extractor.rs"
+            functions:
+              - extract_spans:
+                  input: "document: &str, config: &SpanConfig"
+                  output: "Result<Vec<Span>>"
+                  logic: |
+                    - Split document by lines
+                    - Create spans of 20-80 lines
+                    - Respect paragraph boundaries
+                    - Handle code blocks specially
+                    - Calculate token counts
+              - update_spans:
+                  input: "old_doc: &str, new_doc: &str"
+                  output: "Result<SpanDelta>"
+                  logic: "Incremental span updates"
+          - file: "avocado-core/src/span/mod.rs"
+            structs:
+              - Span:
+                  fields: [id, artifact_id, start_line, end_line, text, tokens]
+              - SpanConfig:
+                  fields: [min_lines, max_lines, overlap, respect_paragraphs]
+        dependencies: [design_schema]
+        tests:
+          - "Spans have correct line numbers"
+          - "Token counts are accurate"
+          - "Paragraph boundaries respected"
+          - "Code blocks stay together"
+        
+      - task_id: embedding_pipeline
+        agent: embedding_agent
+        priority: critical
+        deliverables:
+          - file: "avocado-core/src/embedding/provider.rs"
+            traits:
+              - EmbeddingProvider:
+                  methods:
+                    - embed_text: "&str -> Result<Vec<f32>>"
+                    - embed_batch: "Vec<&str> -> Result<Vec<Vec<f32>>>"
+                    - model_name: "-> &str"
+                    - dimension: "-> usize"
+          - file: "avocado-core/src/embedding/openai.rs"
+            structs:
+              - OpenAIProvider:
+                  config: [api_key, model, dimension, batch_size]
+                  methods:
+                    - new: "config -> Self"
+                    - embed_with_cache: "text -> Result<Vec<f32>>"
+          - file: "avocado-core/src/embedding/cache.rs"
+            implementation: "LRU cache for embeddings"
+        dependencies: [span_extractor]
+        tests:
+          - "Embeddings are deterministic"
+          - "Batch processing works"
+          - "Cache hit/miss tracking"
+          - "Rate limiting handled"
+        
+      - task_id: context_compiler
+        agent: core_engine_agent
+        priority: critical
+        deliverables:
+          - file: "avocado-core/src/compiler/mod.rs"
+            structs:
+              - WorkingSet:
+                  fields: [text, spans, citations, tokens_used, metadata]
+              - CompilerConfig:
+                  fields: [token_budget, channels, strategy, mmr_lambda]
+          - file: "avocado-core/src/compiler/retrieval.rs"
+            functions:
+              - semantic_search:
+                  input: "query_embedding: &[f32], limit: usize"
+                  output: "Vec<ScoredSpan>"
+              - lexical_search:
+                  input: "query: &str, limit: usize"
+                  output: "Vec<ScoredSpan>"
+                  algorithm: "BM25"
+              - hybrid_fusion:
+                  input: "semantic: Vec<ScoredSpan>, lexical: Vec<ScoredSpan>"
+                  output: "Vec<ScoredSpan>"
+                  algorithm: "Reciprocal Rank Fusion"
+          - file: "avocado-core/src/compiler/optimizer.rs"
+            functions:
+              - mmr_diversify:
+                  input: "spans: Vec<ScoredSpan>, lambda: f32"
+                  output: "Vec<ScoredSpan>"
+                  algorithm: "Maximal Marginal Relevance"
+              - token_budget_knapsack:
+                  input: "spans: Vec<ScoredSpan>, budget: usize"
+                  output: "Vec<Span>"
+                  algorithm: "Dynamic programming knapsack"
+          - file: "avocado-core/src/compiler/compile.rs"
+            main_function:
+              compile:
+                input: "query: &str, config: CompilerConfig"
+                output: "Result<WorkingSet>"
+                steps:
+                  - "Generate query embedding"
+                  - "Semantic search"
+                  - "Lexical search"
+                  - "Hybrid fusion"
+                  - "MMR diversification"
+                  - "Token budget optimization"
+                  - "Assemble context"
+                  - "Generate citations"
+                  - "Return WorkingSet"
+        dependencies: [embedding_pipeline, span_extractor]
+        tests:
+          - "Same query produces identical WorkingSet"
+          - "Token budget never exceeded"
+          - "No duplicate spans"
+          - "Citations are accurate"
+          - "MMR increases diversity"
+
+  # WEEK 4-6: Developer Interface
+  developer_interface:
+    week: 4-6
+    parallel_tasks:
+      
+      - task_id: cli_tool
+        agent: cli_agent
+        priority: high
+        deliverables:
+          - file: "avocado-cli/src/main.rs"
+            commands:
+              - init:
+                  args: [--path]
+                  action: "Initialize .avocado directory"
+              - ingest:
+                  args: [path, --recursive, --glob]
+                  action: "Index documents into database"
+                  progress: "Progress bar with file count"
+              - compile:
+                  args: [query, --budget, --format]
+                  action: "Compile working set"
+                  output: "Text or JSON"
+              - stats:
+                  action: "Show database statistics"
+              - clear:
+                  action: "Clear all indexed data"
+          - file: "avocado-cli/src/commands/*.rs"
+            modules: [init, ingest, compile, stats, clear]
+        dependencies: [context_compiler]
+        tests:
+          - "CLI commands execute correctly"
+          - "Progress bars work"
+          - "Error messages are helpful"
+        
+      - task_id: rest_api
+        agent: api_agent
+        priority: high
+        deliverables:
+          - file: "avocado-server/src/main.rs"
+            server: "Axum HTTP server"
+          - file: "avocado-server/src/routes/compile.rs"
+            endpoints:
+              - "POST /compile":
+                  request:
+                    query: string
+                    budget: integer
+                    config: CompilerConfig
+                  response:
+                    working_set: WorkingSet
+                    elapsed_ms: integer
+          - file: "avocado-server/src/routes/ingest.rs"
+            endpoints:
+              - "POST /ingest":
+                  request:
+                    content: string
+                    path: string
+                    metadata: object
+                  response:
+                    artifact_id: string
+                    spans_created: integer
+          - file: "avocado-server/src/routes/artifacts.rs"
+            endpoints:
+              - "GET /artifacts":
+                  response: "List of artifacts"
+              - "GET /artifacts/{id}":
+                  response: "Artifact details"
+              - "GET /artifacts/{id}/spans":
+                  response: "Spans for artifact"
+          - file: "openapi.yaml"
+            specification: "OpenAPI 3.0 spec"
+        dependencies: [context_compiler]
+        tests:
+          - "API endpoints return correct data"
+          - "Error handling works"
+          - "CORS configured"
+          - "Rate limiting works"
+        
+      - task_id: python_sdk
+        agent: python_sdk_agent
+        priority: high
+        deliverables:
+          - file: "python/avocado/__init__.py"
+            exports: [connect, compile, ingest]
+          - file: "python/avocado/client.py"
+            classes:
+              - AvocadoDB:
+                  methods:
+                    - __init__: "path_or_url: str"
+                    - ingest: "path: str, recursive: bool = True"
+                    - compile: |
+                        query: str,
+                        budget: int = 8000,
+                        channels: List[str] = ["semantic", "lexical"]
+                    - clear: "-> None"
+                    - stats: "-> Dict"
+              - WorkingSet:
+                  properties: [text, spans, citations, tokens_used]
+                  methods:
+                    - get_citation: "text: str -> Citation"
+                    - explain: "-> Dict"
+          - file: "python/avocado/types.py"
+            dataclasses: [Span, Citation, CompilerConfig]
+          - file: "python/tests/test_*.py"
+            tests: [test_ingest, test_compile, test_determinism]
+          - file: "python/setup.py"
+            package: "avocado-db"
+        dependencies: [rest_api]
+        tests:
+          - "Python API is pythonic"
+          - "Type hints complete"
+          - "Async support works"
+          - "Examples run correctly"
+        
+      - task_id: typescript_sdk
+        agent: typescript_sdk_agent
+        priority: high
+        deliverables:
+          - file: "typescript/src/index.ts"
+            exports: [AvocadoDB, WorkingSet, CompilerConfig]
+          - file: "typescript/src/client.ts"
+            classes:
+              - AvocadoDB:
+                  constructor: "url: string"
+                  methods:
+                    - ingest: "(path: string, options?: IngestOptions): Promise<void>"
+                    - compile: "(query: string, config?: CompilerConfig): Promise<WorkingSet>"
+                    - clear: "(): Promise<void>"
+                    - stats: "(): Promise<Stats>"
+          - file: "typescript/src/types.ts"
+            interfaces: [WorkingSet, Span, Citation, CompilerConfig]
+          - file: "typescript/tests/*.test.ts"
+            tests: [ingest, compile, determinism]
+          - file: "typescript/package.json"
+            name: "@avocadodb/client"
+        dependencies: [rest_api]
+        tests:
+          - "TypeScript types are correct"
+          - "Promises work correctly"
+          - "Error handling works"
+          - "Tree-shaking supported"
+
+  # WEEK 6-8: Quality & Launch
+  quality_launch:
+    week: 6-8
+    parallel_tasks:
+      
+      - task_id: testing_suite
+        agent: testing_agent
+        priority: critical
+        deliverables:
+          - file: "tests/integration/determinism_test.rs"
+            test_cases:
+              - "Same query always returns same WorkingSet"
+              - "Hash of WorkingSet is consistent"
+              - "Order of spans is deterministic"
+          - file: "tests/integration/performance_test.rs"
+            test_cases:
+              - "Compile time < 200ms for 8K tokens"
+              - "Ingest rate > 1000 docs/minute"
+              - "Memory usage < 100MB for 10K documents"
+          - file: "tests/integration/accuracy_test.rs"
+            test_cases:
+              - "Token budget utilized > 95%"
+              - "No duplicate spans in result"
+              - "Citations point to correct spans"
+          - file: "benchmarks/bench.rs"
+            benchmarks:
+              - ingest_throughput
+              - compile_latency
+              - memory_usage
+              - determinism_check
+        dependencies: [context_compiler, cli_tool, rest_api]
+        
+      - task_id: documentation
+        agent: docs_agent
+        priority: high
+        deliverables:
+          - file: "docs/getting-started/quickstart.md"
+            content: |
+              # 5 Minutes to Better RAG
+              - Installation
+              - First ingestion
+              - First compilation
+              - Integration example
+          - file: "docs/getting-started/installation.md"
+            sections:
+              - "Binary installation"
+              - "Building from source"
+              - "Docker setup"
+              - "Python SDK install"
+              - "TypeScript SDK install"
+          - file: "docs/guides/migration.md"
+            content: "Migrating from LangChain/LlamaIndex"
+          - file: "docs/api/reference.md"
+            content: "Complete API documentation"
+          - file: "examples/langchain-integration/main.py"
+            content: "Drop-in LangChain replacement"
+          - file: "examples/llamaindex-integration/main.py"
+            content: "Drop-in LlamaIndex replacement"
+          - file: "examples/simple-rag/main.py"
+            content: "Basic RAG comparison demo"
+        dependencies: [python_sdk, typescript_sdk]
+        
+      - task_id: demo_creation
+        agent: docs_agent
+        priority: critical
+        deliverables:
+          - file: "demo/side-by-side/app.py"
+            features:
+              - "Split screen UI"
+              - "Standard RAG on left"
+              - "AvocadoDB on right"
+              - "Same query to both"
+              - "Show variance vs determinism"
+              - "Show token utilization"
+              - "Show citations"
+          - file: "demo/notebook/avocado_demo.ipynb"
+            cells:
+              - "Problem with standard RAG"
+              - "AvocadoDB installation"
+              - "Ingesting documents"
+              - "Compiling context"
+              - "Comparing results"
+              - "Performance metrics"
+        dependencies: [python_sdk]
+        
+      - task_id: release_pipeline
+        agent: devops_agent
+        priority: high
+        deliverables:
+          - file: ".github/workflows/release.yml"
+            triggers: [tag_push]
+            steps:
+              - "Run full test suite"
+              - "Build binaries (Linux, macOS, Windows)"
+              - "Create GitHub release"
+              - "Publish to crates.io"
+              - "Publish Python SDK to PyPI"
+              - "Publish TypeScript SDK to npm"
+              - "Build and push Docker images"
+          - file: "Dockerfile"
+            stages:
+              - builder: "Compile Rust binary"
+              - runtime: "Minimal runtime image"
+          - file: "docker-compose.yml"
+            services:
+              - avocado: "Main service"
+              - postgres: "Optional for cloud mode"
+        dependencies: [testing_suite]
+
+# Success criteria for Phase 1
+success_criteria:
+  technical:
+    - deterministic_compilation: "100% reproducible WorkingSet for same query"
+    - performance: "< 200ms retrieval for 8K tokens"
+    - token_utilization: "> 95% of budget used effectively"
+    - zero_duplication: "No duplicate spans in results"
+    - citation_accuracy: "100% of facts traceable to source spans"
+    
+  product:
+    - integration_time: "< 5 minutes from install to first query"
+    - compatibility: "Works with any LLM (OpenAI, Anthropic, Llama)"
+    - framework_support: "Drop-in replacement for LangChain/LlamaIndex"
+    - developer_experience: "Clear errors, helpful docs, intuitive API"
+    
+  business:
+    - adoption: "10+ design partners using in development"
+    - production: "3+ deployments in production"
+    - community: "100+ GitHub stars in first week"
+    - feedback: "Clear demand for Phase 2 features"
+
+# Deliverable artifacts by week
+deliverables_timeline:
+  week_2:
+    - "Core data model defined"
+    - "Repository structure complete"
+    - "CI pipeline running"
+    - "Database schema implemented"
+    
+  week_4:
+    - "Span extraction working"
+    - "Embedding pipeline complete"
+    - "Basic context compilation functional"
+    - "Determinism validated"
+    
+  week_6:
+    - "CLI tool usable"
+    - "REST API serving requests"
+    - "Python SDK functional"
+    - "TypeScript SDK functional"
+    
+  week_8:
+    - "Full test coverage"
+    - "Documentation complete"
+    - "Demo compelling"
+    - "Release automated"
+    - "Phase 1 COMPLETE"
+
+# Risk mitigation
+risks:
+  - risk: "Embedding costs too high"
+    mitigation: "Implement aggressive caching, batch processing"
+    
+  - risk: "Performance not meeting targets"
+    mitigation: "Profile early, optimize hot paths, consider SIMD"
+    
+  - risk: "Determinism hard to guarantee"
+    mitigation: "Extensive testing, fixed random seeds, canonical ordering"
+    
+  - risk: "Integration more complex than expected"
+    mitigation: "Provide multiple integration patterns, extensive examples"
+
+# Agent coordination rules
+coordination:
+  communication:
+    - "Daily standups in #avocado-dev"
+    - "PR reviews required from architect_agent"
+    - "Breaking changes need team consensus"
+    
+  branching_strategy:
+    - "Feature branches off main"
+    - "PR required for merge"
+    - "CI must pass"
+    - "At least one review required"
+    
+  documentation:
+    - "Code must have doc comments"
+    - "APIs must have examples"
+    - "Breaking changes need migration guide"
+    
+  testing:
+    - "Unit tests required for new code"
+    - "Integration tests for new features"
+    - "Benchmarks for performance-critical code"
+
+# Launch checklist
+launch_checklist:
+  code:
+    - [ ] All tests passing
+    - [ ] Benchmarks meeting targets
+    - [ ] No critical TODOs remaining
+    - [ ] Security audit complete
+    
+  documentation:
+    - [ ] README compelling
+    - [ ] Quickstart guide tested
+    - [ ] API docs complete
+    - [ ] Migration guides ready
+    
+  infrastructure:
+    - [ ] GitHub repo public
+    - [ ] CI/CD working
+    - [ ] Release process tested
+    - [ ] Demo deployed
+    
+  marketing:
+    - [ ] Launch blog post ready
+    - [ ] "Why RAG is broken" post ready
+    - [ ] Demo video recorded
+    - [ ] Social media posts drafted

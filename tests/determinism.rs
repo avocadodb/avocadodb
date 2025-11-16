@@ -1,0 +1,173 @@
+//! Determinism tests for AvocadoDB
+//!
+//! The most critical test: same query → same result, every time.
+
+use avocado_core::{compiler, db::Database, index::VectorIndex, span, Artifact, CompilerConfig};
+use uuid::Uuid;
+
+#[tokio::test]
+#[ignore] // Requires OPENAI_API_KEY
+async fn test_deterministic_compilation() {
+    // Setup test database
+    let db = Database::new(":memory:").expect("Failed to create database");
+
+    // Create test artifact
+    let artifact_id = Uuid::new_v4().to_string();
+    let content = create_test_document();
+    let content_hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
+
+    let artifact = Artifact {
+        id: artifact_id.clone(),
+        path: "test.md".to_string(),
+        content: content.clone(),
+        content_hash,
+        metadata: None,
+        created_at: chrono::Utc::now(),
+    };
+
+    db.insert_artifact(&artifact).unwrap();
+
+    // Extract and embed spans
+    let mut spans = span::extract_spans(&content, &artifact_id).unwrap();
+
+    // Note: This test requires OPENAI_API_KEY to be set
+    let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
+    let embeddings = avocado_core::embedding::embed_batch(texts, None)
+        .await
+        .expect("Failed to embed (is OPENAI_API_KEY set?)");
+
+    for (span, emb) in spans.iter_mut().zip(embeddings.iter()) {
+        span.embedding = Some(emb.clone());
+        span.embedding_model = Some("text-embedding-ada-002".to_string());
+    }
+
+    db.insert_spans(&spans).unwrap();
+
+    // Build index
+    let all_spans = db.get_all_spans().unwrap();
+    let index = VectorIndex::build(all_spans);
+
+    // Run compilation 100 times
+    let query = "How does authentication work?";
+    let config = CompilerConfig::default();
+
+    let mut hashes = Vec::new();
+    for _ in 0..100 {
+        let result = compiler::compile(query, config.clone(), &db, &index, None)
+            .await
+            .unwrap();
+
+        let hash = result.deterministic_hash();
+        hashes.push(hash);
+    }
+
+    // All hashes should be identical
+    let first_hash = &hashes[0];
+    assert!(
+        hashes.iter().all(|h| h == first_hash),
+        "Results were not deterministic! Got {} unique hashes",
+        hashes.iter().collect::<std::collections::HashSet<_>>().len()
+    );
+
+    println!("✅ Passed determinism test: 100 identical results");
+}
+
+#[tokio::test]
+#[ignore] // Requires OPENAI_API_KEY
+async fn test_determinism_with_different_instances() {
+    // Test that even with fresh database instances, results are identical
+
+    let content = create_test_document();
+    let query = "authentication";
+    let config = CompilerConfig::default();
+
+    let mut hashes = Vec::new();
+
+    for i in 0..3 {
+        // Create fresh database
+        let db = Database::new(":memory:").unwrap();
+
+        // Ingest same content
+        let artifact_id = Uuid::new_v4().to_string();
+        let content_hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
+
+        let artifact = Artifact {
+            id: artifact_id.clone(),
+            path: format!("test_{}.md", i),
+            content: content.clone(),
+            content_hash,
+            metadata: None,
+            created_at: chrono::Utc::now(),
+        };
+
+        db.insert_artifact(&artifact).unwrap();
+
+        let mut spans = span::extract_spans(&content, &artifact_id).unwrap();
+
+        let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
+        let embeddings = avocado_core::embedding::embed_batch(texts, None)
+            .await
+            .unwrap();
+
+        for (span, emb) in spans.iter_mut().zip(embeddings.iter()) {
+            span.embedding = Some(emb.clone());
+            span.embedding_model = Some("text-embedding-ada-002".to_string());
+        }
+
+        db.insert_spans(&spans).unwrap();
+
+        // Compile
+        let all_spans = db.get_all_spans().unwrap();
+        let index = VectorIndex::build(all_spans);
+
+        let result = compiler::compile(query, config.clone(), &db, &index, None)
+            .await
+            .unwrap();
+
+        hashes.push(result.deterministic_hash());
+    }
+
+    // All should be identical
+    assert_eq!(
+        hashes.iter().collect::<std::collections::HashSet<_>>().len(),
+        1,
+        "Different database instances produced different results"
+    );
+
+    println!("✅ Passed determinism test across instances");
+}
+
+fn create_test_document() -> String {
+    r#"# Authentication Guide
+
+Our system uses JWT-based authentication for secure access control.
+
+## Overview
+
+Users must authenticate with valid credentials to access protected endpoints.
+The authentication flow follows industry best practices.
+
+## Login Process
+
+1. User submits credentials to /api/login
+2. Server validates username and password
+3. On success, server issues JWT token
+4. Token is valid for 24 hours
+
+## Using Tokens
+
+Include the token in the Authorization header:
+```
+Authorization: Bearer <token>
+```
+
+## Security Considerations
+
+- Tokens should be stored securely
+- Use HTTPS in production
+- Implement rate limiting
+- Rotate secrets regularly
+
+"#
+    .to_string()
+}

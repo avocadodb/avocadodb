@@ -1,0 +1,214 @@
+//! Span extraction from documents
+//!
+//! This module handles extracting meaningful text spans from documents.
+//! Spans are the fundamental unit of retrieval in AvocadoDB.
+//!
+//! # Key Principles
+//!
+//! - Spans should be 20-50 lines (roughly 200-500 tokens)
+//! - Respect natural boundaries (paragraphs, code blocks, sections)
+//! - Never split mid-sentence
+//! - Maintain line number accuracy for citations
+
+use crate::types::{Result, Span};
+use uuid::Uuid;
+
+/// Extract spans from document text
+///
+/// # Arguments
+///
+/// * `content` - The full document text
+/// * `artifact_id` - The ID of the parent artifact
+///
+/// # Returns
+///
+/// A vector of spans extracted from the document
+///
+/// # Algorithm
+///
+/// 1. Split document into lines
+/// 2. Group lines into spans (target 20-50 lines)
+/// 3. Respect paragraph boundaries (double newlines)
+/// 4. Keep code blocks together
+/// 5. Calculate token counts for each span
+///
+pub fn extract_spans(content: &str, artifact_id: &str) -> Result<Vec<Span>> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut spans = Vec::new();
+    let mut current_start = 1;
+    let mut current_lines = Vec::new();
+
+    for (idx, line) in lines.iter().enumerate() {
+        let line_num = idx + 1;
+        current_lines.push(*line);
+
+        // Determine if we should create a span at this point
+        let should_split = should_create_span(
+            &current_lines,
+            line,
+            idx,
+            lines.len(),
+        );
+
+        if should_split && !current_lines.is_empty() {
+            let text = current_lines.join("\n");
+            let token_count = estimate_tokens(&text);
+
+            spans.push(Span {
+                id: Uuid::new_v4().to_string(),
+                artifact_id: artifact_id.to_string(),
+                start_line: current_start,
+                end_line: line_num,
+                text,
+                embedding: None,
+                embedding_model: None,
+                token_count,
+                metadata: None,
+            });
+
+            current_start = line_num + 1;
+            current_lines.clear();
+        }
+    }
+
+    // Handle any remaining lines
+    if !current_lines.is_empty() {
+        let text = current_lines.join("\n");
+        let token_count = estimate_tokens(&text);
+
+        spans.push(Span {
+            id: Uuid::new_v4().to_string(),
+            artifact_id: artifact_id.to_string(),
+            start_line: current_start,
+            end_line: lines.len(),
+            text,
+            embedding: None,
+            embedding_model: None,
+            token_count,
+            metadata: None,
+        });
+    }
+
+    Ok(spans)
+}
+
+/// Determine if we should create a span at the current position
+///
+/// # Arguments
+///
+/// * `current_lines` - Lines accumulated so far
+/// * `line` - The current line being processed
+/// * `idx` - Current line index
+/// * `total_lines` - Total number of lines in document
+///
+/// # Returns
+///
+/// `true` if a span should be created at this point
+///
+/// TODO: Implement smart span boundary detection
+/// Consider:
+/// - Paragraph boundaries (empty lines)
+/// - Code block boundaries (``` markers)
+/// - Section headers (# markdown, == rst, etc.)
+/// - Target span size (20-50 lines)
+/// - Minimum span size (avoid tiny spans)
+fn should_create_span(
+    current_lines: &[&str],
+    line: &str,
+    idx: usize,
+    total_lines: usize,
+) -> bool {
+    let num_lines = current_lines.len();
+
+    // Always split at end of document
+    if idx == total_lines - 1 {
+        return true;
+    }
+
+    // Reached maximum size (50 lines)
+    if num_lines >= 50 {
+        return true;
+    }
+
+    // Hit paragraph boundary and have minimum size
+    if line.trim().is_empty() && num_lines >= 20 {
+        return true;
+    }
+
+    // TODO: Add more sophisticated boundary detection here
+    // This is where you can implement smart heuristics for:
+    // - Code block detection
+    // - Section header detection
+    // - Sentence boundary detection
+    // - Target size optimization (30 lines is ideal)
+
+    false
+}
+
+/// Estimate token count for text
+///
+/// Uses a simple heuristic (~4 chars per token) for quick estimation.
+/// For production, this should use tiktoken-rs for accurate counts.
+///
+/// # Arguments
+///
+/// * `text` - The text to estimate tokens for
+///
+/// # Returns
+///
+/// Estimated number of tokens
+fn estimate_tokens(text: &str) -> usize {
+    // Simple estimation: ~4 characters per token
+    // TODO: Replace with tiktoken-rs for accurate counting
+    (text.len() / 4).max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_spans_simple() {
+        let content = "Line 1\nLine 2\nLine 3";
+        let spans = extract_spans(content, "test-artifact").unwrap();
+
+        assert!(!spans.is_empty());
+        assert_eq!(spans[0].start_line, 1);
+        assert!(spans[0].token_count > 0);
+    }
+
+    #[test]
+    fn test_extract_spans_with_paragraphs() {
+        let content = (0..25).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n")
+            + "\n\n"
+            + &(25..50).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n");
+
+        let spans = extract_spans(&content, "test-artifact").unwrap();
+
+        // Should create multiple spans
+        assert!(spans.len() >= 2);
+
+        // Each span should have valid line numbers
+        for span in &spans {
+            assert!(span.end_line >= span.start_line);
+        }
+    }
+
+    #[test]
+    fn test_no_overlapping_spans() {
+        let content = (0..100).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n");
+        let spans = extract_spans(&content, "test-artifact").unwrap();
+
+        // Verify no gaps or overlaps
+        for i in 0..spans.len() - 1 {
+            assert_eq!(spans[i].end_line + 1, spans[i + 1].start_line);
+        }
+    }
+
+    #[test]
+    fn test_token_estimation() {
+        let text = "This is a test sentence with about ten words in it.";
+        let tokens = estimate_tokens(text);
+        assert!(tokens > 0);
+    }
+}

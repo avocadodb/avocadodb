@@ -1,0 +1,462 @@
+# AvocadoDB Phase 1 - Ruthlessly Scoped Implementation Plan
+# Realistic 8-week execution plan with clear must-have vs nice-to-have
+
+metadata:
+  project: AvocadoDB
+  phase: 1
+  version: 1.0.0-minimal
+  duration: 8_weeks
+  start_date: "2025-01-20"
+  core_objective: "Ship deterministic context compiler that fixes RAG"
+  success_metric: "Drop-in RAG replacement with deterministic results"
+
+# Global configuration
+global_config:
+  repository: "github.com/avocadodb/avocadodb"
+  language: rust
+  min_rust_version: "1.75.0"
+  database: sqlite  # No Postgres in Phase 1
+  
+  tech_stack:
+    core_engine: rust
+    cli: rust + clap
+    python_sdk: python + requests  # Just HTTP client, no PyO3 complexity
+    embedding_provider: openai  # Start with one provider
+    vector_index: in_memory  # No SQLite vector indexes
+    
+  conventions:
+    error_handling: "Result<T, Error> with thiserror"
+    logging: "env_logger"  # Simpler than tracing for v1
+    serialization: "serde + serde_json"
+    async_runtime: "tokio"
+    database: "rusqlite"  # Simpler than sqlx for SQLite
+    http_server: "axum"
+
+# Reduced agent team
+agents:
+  - id: core_agent
+    role: "Core Engine & Architecture"
+    responsibilities:
+      - Design data structures
+      - Implement span extraction
+      - Build context compiler
+      - Create retrieval pipeline
+    
+  - id: database_agent
+    role: "Database & Storage"
+    responsibilities:
+      - SQLite schema
+      - Data operations
+      - In-memory vector index
+    
+  - id: cli_agent
+    role: "CLI & Server"
+    responsibilities:
+      - CLI commands
+      - HTTP API
+      - Basic server
+    
+  - id: python_agent
+    role: "Python SDK & Demo"
+    responsibilities:
+      - Python client
+      - Simple demo
+      - Integration example
+    
+  - id: test_agent
+    role: "Testing & Documentation"
+    responsibilities:
+      - Core tests
+      - Basic docs
+      - README
+
+# MUST HAVE - Core deliverables for Phase 1
+must_have:
+  
+  week_1_2_foundation:
+    deliverables:
+      
+      - task: sqlite_schema
+        agent: database_agent
+        priority: CRITICAL
+        output:
+          - file: "migrations/001_initial.sql"
+            schema: |
+              -- Simple, SQLite-compatible schema
+              CREATE TABLE artifacts (
+                  id TEXT PRIMARY KEY,
+                  path TEXT NOT NULL UNIQUE,
+                  content TEXT NOT NULL,
+                  content_hash TEXT NOT NULL,
+                  metadata TEXT,  -- JSON as TEXT, not JSONB
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+              );
+              
+              CREATE TABLE spans (
+                  id TEXT PRIMARY KEY,
+                  artifact_id TEXT NOT NULL,
+                  start_line INTEGER NOT NULL,
+                  end_line INTEGER NOT NULL,
+                  text TEXT NOT NULL,
+                  embedding BLOB,  -- Store as binary
+                  embedding_model TEXT,
+                  token_count INTEGER,
+                  metadata TEXT,  -- JSON as TEXT
+                  FOREIGN KEY (artifact_id) REFERENCES artifacts(id)
+              );
+              
+              -- Simple indexes only
+              CREATE INDEX idx_spans_artifact ON spans(artifact_id);
+              CREATE INDEX idx_spans_lines ON spans(artifact_id, start_line, end_line);
+          
+          - file: "src/db/mod.rs"
+            content: |
+              - Connection pool
+              - Basic CRUD operations
+              - JSON serialization helpers
+      
+      - task: core_types
+        agent: core_agent
+        priority: CRITICAL
+        output:
+          - file: "avocado-core/src/types.rs"
+            structs:
+              - Span:
+                  fields: [id, artifact_id, start_line, end_line, text, token_count]
+                  derive: [Clone, Debug, Serialize, Deserialize]
+              - WorkingSet:
+                  fields: [text, spans, citations, tokens_used]
+                  methods:
+                    - deterministic_hash: "Calculate stable hash"
+              - CompilerConfig:
+                  fields: [token_budget, enable_mmr, mmr_lambda]
+  
+  week_2_4_core_engine:
+    deliverables:
+      
+      - task: span_extraction
+        agent: core_agent
+        priority: CRITICAL
+        output:
+          - file: "avocado-core/src/span.rs"
+            functions:
+              - extract_spans:
+                  signature: "(text: &str) -> Vec<Span>"
+                  algorithm: |
+                    - Split by lines
+                    - Group into 20-50 line spans
+                    - Respect paragraph boundaries
+                    - Calculate tokens with tiktoken
+                  tests:
+                    - "Correct line numbers"
+                    - "No overlapping spans"
+                    - "Token counts accurate"
+      
+      - task: embeddings
+        agent: core_agent
+        priority: CRITICAL
+        output:
+          - file: "avocado-core/src/embedding.rs"
+            implementation: |
+              - OpenAI ada-002 only for v1
+              - Simple HTTP client
+              - Basic retry logic
+              - In-memory cache (HashMap)
+            functions:
+              - embed_text: "(text: &str) -> Result<Vec<f32>>"
+              - embed_batch: "(texts: Vec<&str>) -> Result<Vec<Vec<f32>>>"
+      
+      - task: vector_index
+        agent: database_agent
+        priority: CRITICAL
+        output:
+          - file: "avocado-core/src/index.rs"
+            implementation: |
+              - In-memory HNSW or even brute-force for Phase 1
+              - Load all embeddings on startup
+              - Cosine similarity search
+            functions:
+              - build_index: "(spans: Vec<Span>) -> Index"
+              - search: "(query: Vec<f32>, k: usize) -> Vec<ScoredSpan>"
+      
+      - task: context_compiler
+        agent: core_agent
+        priority: CRITICAL
+        output:
+          - file: "avocado-core/src/compiler.rs"
+            main_function:
+              compile:
+                signature: "(query: &str, config: CompilerConfig) -> Result<WorkingSet>"
+                steps:
+                  - "Embed query"
+                  - "Semantic search (top-50)"
+                  - "Simple keyword match (top-20)"
+                  - "Merge results with score fusion"
+                  - "MMR diversification"
+                  - "Token budget packing"
+                  - "Sort by (score, artifact_id, start_line) for determinism"
+                  - "Build WorkingSet with citations"
+            supporting:
+              - mmr: "Basic maximal marginal relevance"
+              - pack_budget: "Greedy token packing (good enough for v1)"
+              - ensure_determinism: "Canonical ordering everywhere"
+  
+  week_4_6_interface:
+    deliverables:
+      
+      - task: cli_tool
+        agent: cli_agent
+        priority: CRITICAL
+        output:
+          - file: "avocado-cli/src/main.rs"
+            commands:
+              init:
+                args: []
+                action: "Create .avocado/db.sqlite"
+              ingest:
+                args: [path]
+                action: "Index files from path"
+                output: "X files indexed, Y spans created"
+              compile:
+                args: [query, --budget]
+                action: "Compile and print context"
+                output: "Text output with citation markers"
+              clear:
+                action: "Delete all data"
+          - simplicity: "No progress bars, no fancy UI for v1"
+      
+      - task: http_api
+        agent: cli_agent
+        priority: CRITICAL
+        output:
+          - file: "avocado-server/src/main.rs"
+            endpoints:
+              - "POST /compile":
+                  request: { query: string, budget: number }
+                  response: { working_set: object }
+              - "POST /ingest":
+                  request: { path: string, content: string }
+                  response: { artifact_id: string, spans: number }
+              - "GET /stats":
+                  response: { artifacts: number, spans: number }
+          - notes: "Basic Axum server, no auth, CORS enabled"
+      
+      - task: python_sdk
+        agent: python_agent
+        priority: CRITICAL
+        output:
+          - file: "python/avocado.py"
+            implementation: |
+              # Dead simple HTTP client
+              class AvocadoDB:
+                  def __init__(self, url="http://localhost:8080"):
+                      self.url = url
+                  
+                  def ingest(self, path: str) -> dict:
+                      # POST to /ingest
+                  
+                  def compile(self, query: str, budget: int = 8000) -> WorkingSet:
+                      # POST to /compile
+                      # Return WorkingSet object
+              
+              class WorkingSet:
+                  def __init__(self, data):
+                      self.text = data['text']
+                      self.spans = data['spans']
+                      self.citations = data['citations']
+                      self.tokens_used = data['tokens_used']
+          - file: "python/example.py"
+            content: |
+              # Simple comparison
+              from avocado import AvocadoDB
+              
+              db = AvocadoDB()
+              db.ingest("./docs")
+              
+              # Run same query 3 times
+              results = []
+              for i in range(3):
+                  result = db.compile("How does authentication work?")
+                  results.append(result.text)
+              
+              # Check determinism
+              assert results[0] == results[1] == results[2]
+              print("✅ Deterministic!")
+  
+  week_6_8_quality:
+    deliverables:
+      
+      - task: core_tests
+        agent: test_agent
+        priority: CRITICAL
+        output:
+          - file: "tests/determinism.rs"
+            test: "Same query → same hash 100 times"
+          - file: "tests/performance.rs"
+            test: "Compile < 500ms for 8K tokens"
+          - file: "tests/correctness.rs"
+            tests:
+              - "No duplicate spans"
+              - "Token budget respected"
+              - "Citations valid"
+      
+      - task: documentation
+        agent: test_agent
+        priority: CRITICAL
+        output:
+          - file: "README.md"
+            sections:
+              - "What is AvocadoDB"
+              - "Quick install"
+              - "5-minute example"
+              - "Why it's better than RAG"
+          - file: "docs/quickstart.md"
+            content: "Step-by-step first usage"
+          - file: "examples/compare_rag.py"
+            content: "Side-by-side comparison with standard RAG"
+
+# NICE TO HAVE - Can ship in v1.0.1
+nice_to_have:
+  
+  typescript_sdk:
+    justification: "Python is enough for launch"
+    complexity: "Needs either WASM or separate HTTP client"
+    defer_to: "Version 1.0.1"
+  
+  fancy_demo_ui:
+    justification: "CLI demo is sufficient"
+    complexity: "Requires frontend work"
+    defer_to: "Version 1.1"
+  
+  docker_support:
+    justification: "Binary + Python pip is enough"
+    complexity: "Multi-platform builds"
+    defer_to: "Version 1.0.1"
+  
+  framework_integrations:
+    justification: "Raw Python SDK is enough to prove value"
+    examples: [langchain_adapter, llamaindex_adapter]
+    defer_to: "Community contributions or 1.1"
+  
+  advanced_retrieval:
+    features: [BM25_tuning, learned_rankers, query_expansion]
+    justification: "Simple hybrid search is enough for v1"
+    defer_to: "Phase 2"
+  
+  postgres_support:
+    justification: "SQLite handles 10K+ docs easily"
+    complexity: "Different schema, migrations"
+    defer_to: "Phase 2 when scaling matters"
+
+# Simplified success criteria
+success_criteria:
+  
+  week_4_checkpoint:
+    - "Can ingest documents"
+    - "Can compile a query"
+    - "Results are deterministic"
+    - "CLI works end-to-end"
+  
+  week_8_launch:
+    technical:
+      - "100% deterministic compilation"
+      - "< 500ms for 8K token context"
+      - "No duplicate spans ever"
+      - "Token budget respected"
+    
+    product:
+      - "Install + first query in 5 minutes"
+      - "Python example runs"
+      - "Clear improvement over standard RAG"
+    
+    community:
+      - "README compelling"
+      - "One good demo/example"
+      - "Can share on HN/Twitter"
+
+# Explicit non-goals for Phase 1
+non_goals:
+  - "Multi-tenancy"
+  - "Authentication"
+  - "Versioning"
+  - "Collaborative features"
+  - "Memory systems"
+  - "Artifact management"
+  - "WASM anything"
+  - "Governance/policies"
+  - "Cloud deployment"
+  - "Paid features"
+
+# Risk mitigations (simplified)
+risks:
+  
+  - risk: "Determinism harder than expected"
+    mitigation: |
+      - Sort everything explicitly
+      - No floating point in sort keys
+      - Test extensively
+      - Document any limitations
+  
+  - risk: "Performance too slow"
+    mitigation: |
+      - Start with 'good enough' (< 500ms)
+      - Profile and optimize one bottleneck at a time
+      - Brute force is fine for v1 with < 10K spans
+  
+  - risk: "Embedding costs"
+    mitigation: |
+      - Cache aggressively
+      - Batch requests
+      - Document costs clearly
+      - Consider local models for v1.1
+
+# Week-by-week reality check
+timeline:
+  
+  week_1:
+    goals: "Schema, types, project structure"
+    deliverable: "Can create and query SQLite DB"
+    
+  week_2:
+    goals: "Span extraction working"
+    deliverable: "Can ingest a document and see spans"
+    
+  week_3:
+    goals: "Embeddings and vector search"
+    deliverable: "Can search for similar spans"
+    
+  week_4:
+    goals: "Compiler working end-to-end"
+    deliverable: "CLI works: ingest + compile"
+    checkpoint: "GO/NO-GO decision point"
+    
+  week_5:
+    goals: "HTTP API and Python SDK"
+    deliverable: "Can use from Python"
+    
+  week_6:
+    goals: "Testing and determinism validation"
+    deliverable: "All core tests passing"
+    
+  week_7:
+    goals: "Documentation and examples"
+    deliverable: "README and quickstart done"
+    
+  week_8:
+    goals: "Polish, package, and ship"
+    deliverable: "Binary releases, pip package, announcement ready"
+
+# Definition of done for Phase 1
+done_when:
+  - "README on GitHub"
+  - "Binary releases for Linux/Mac"
+  - "Python package on PyPI"
+  - "One compelling demo"
+  - "Tests proving determinism"
+  - "Blog post explaining why RAG is broken"
+  - "Tweet thread ready to go viral"
+
+# The one metric that matters
+north_star_metric: |
+  A developer can replace their broken RAG with AvocadoDB in 5 minutes
+  and immediately see deterministic, citation-backed results.

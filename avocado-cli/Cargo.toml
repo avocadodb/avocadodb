@@ -1,0 +1,20 @@
+[package]
+name = "avocado-cli"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "avocado"
+path = "src/main.rs"
+
+[dependencies]
+avocado-core = { path = "../avocado-core" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }
