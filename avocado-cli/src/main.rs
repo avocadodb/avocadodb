@@ -5,6 +5,8 @@
 use anyhow::Result;
 use avocado_core::{compiler, db::Database, embedding, index::VectorIndex, span, Artifact, CompilerConfig};
 use clap::{Parser, Subcommand};
+use console::style;
+use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use sha2::Digest;
 use std::fs;
 use std::path::PathBuf;
@@ -109,8 +111,28 @@ async fn main() -> Result<()> {
                 vec![path]
             };
 
+            println!(
+                "{} Ingesting {} {}...\n",
+                style("🥑").green(),
+                files.len(),
+                if files.len() == 1 { "file" } else { "files" }
+            );
+
+            // Create multi-progress for overall + individual file progress
+            let multi = MultiProgress::new();
+
+            let overall_pb = multi.add(ProgressBar::new(files.len() as u64));
+            overall_pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} files ({msg})")
+                    .unwrap()
+                    .progress_chars("#>-")
+            );
+            overall_pb.set_message("starting");
+
             let mut total_spans = 0;
-            for file_path in &files {
+
+            for (idx, file_path) in files.iter().enumerate() {
                 let content = fs::read_to_string(file_path)?;
 
                 // Create artifact
@@ -128,27 +150,61 @@ async fn main() -> Result<()> {
 
                 db.insert_artifact(&artifact)?;
 
-                // Extract and embed spans
+                // Extract spans
                 let mut spans = span::extract_spans(&content, &artifact_id)?;
 
-                // Embed spans
-                println!("Embedding {} spans from {}...", spans.len(), file_path.display());
-                let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
-                let embeddings = embedding::embed_batch(texts, None).await?;
+                // Show file progress
+                let file_name = file_path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
 
-                for (span, emb) in spans.iter_mut().zip(embeddings.iter()) {
+                overall_pb.set_message(format!("{} ({} spans)", file_name, spans.len()));
+
+                // Create progress bar for embedding
+                let embed_pb = multi.add(ProgressBar::new(spans.len() as u64));
+                embed_pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template("  {spinner:.green} Embedding: [{bar:30.cyan/blue}] {pos}/{len} spans")
+                        .unwrap()
+                        .progress_chars("=>-")
+                );
+
+                // Embed spans in smaller batches to show progress
+                let batch_size = 10;
+                let mut all_embeddings = Vec::new();
+
+                // Collect texts and embed in batches
+                {
+                    let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
+
+                    for text_batch in texts.chunks(batch_size) {
+                        let embeddings = embedding::embed_batch(text_batch.to_vec(), None).await?;
+                        all_embeddings.extend(embeddings);
+                        embed_pb.inc(text_batch.len() as u64);
+                    }
+                }
+
+                // Now update spans with embeddings
+                for (span, emb) in spans.iter_mut().zip(all_embeddings.iter()) {
                     span.embedding = Some(emb.clone());
                     span.embedding_model = Some(embedding::embedding_model().to_string());
                 }
 
+                embed_pb.finish_and_clear();
+
                 db.insert_spans(&spans)?;
                 total_spans += spans.len();
+
+                overall_pb.inc(1);
             }
 
+            overall_pb.finish_with_message(format!("{} spans created", total_spans));
+
             println!(
-                "✓ Indexed {} files, created {} spans",
-                files.len(),
-                total_spans
+                "\n{} Indexed {} files → {} spans",
+                style("✓").green().bold(),
+                style(files.len()).cyan().bold(),
+                style(total_spans).cyan().bold()
             );
         }
 
@@ -158,10 +214,38 @@ async fn main() -> Result<()> {
             json,
             db_path,
         } => {
+            if !json {
+                println!(
+                    "{} Compiling context for: {}\n",
+                    style("🥑").green(),
+                    style(&query).cyan().bold()
+                );
+            }
+
             let db = Database::new(&db_path)?;
+
+            // Show loading spinner
+            let spinner = if !json {
+                let sp = ProgressBar::new_spinner();
+                sp.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap()
+                );
+                sp.set_message("Loading spans from database...");
+                sp.enable_steady_tick(std::time::Duration::from_millis(100));
+                Some(sp)
+            } else {
+                None
+            };
 
             // Load all spans and build index
             let spans = db.get_all_spans()?;
+
+            if let Some(sp) = &spinner {
+                sp.set_message(format!("Building vector index ({} spans)...", spans.len()));
+            }
+
             let index = VectorIndex::build(spans);
 
             // Compile context
@@ -170,20 +254,54 @@ async fn main() -> Result<()> {
                 ..Default::default()
             };
 
+            if let Some(sp) = &spinner {
+                sp.set_message("Compiling context (embedding query + hybrid search)...");
+            }
+
             let working_set = compiler::compile(&query, config, &db, &index, None).await?;
+
+            if let Some(sp) = spinner {
+                sp.finish_and_clear();
+            }
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&working_set)?);
             } else {
+                // Print context
                 println!("{}", working_set.text);
-                println!("\n---");
+                println!("\n{}", style("─".repeat(60)).dim());
+
+                // Calculate utilization percentage
+                let utilization = (working_set.tokens_used as f32 / budget as f32 * 100.0) as usize;
+
+                // Print stats with colors
                 println!(
-                    "Tokens: {}/{} | Time: {}ms | Citations: {}",
-                    working_set.tokens_used,
-                    budget,
-                    working_set.compilation_time_ms,
-                    working_set.citations.len()
+                    "{}  {} / {} ({utilization}%)",
+                    style("Tokens:   ").bold(),
+                    style(working_set.tokens_used).cyan().bold(),
+                    style(budget).dim(),
                 );
+                println!(
+                    "{}  {} spans",
+                    style("Compiled: ").bold(),
+                    style(working_set.citations.len()).cyan().bold()
+                );
+                println!(
+                    "{}  {}ms {}",
+                    style("Time:     ").bold(),
+                    style(working_set.compilation_time_ms).cyan().bold(),
+                    if working_set.compilation_time_ms < 500 {
+                        style("✓").green()
+                    } else {
+                        style("⚠").yellow()
+                    }
+                );
+                println!(
+                    "{}  {}",
+                    style("Hash:     ").bold(),
+                    style(&working_set.deterministic_hash()[..16]).dim()
+                );
+                println!();
             }
         }
 
@@ -191,10 +309,112 @@ async fn main() -> Result<()> {
             let db = Database::new(&db_path)?;
             let (artifacts, spans, tokens) = db.get_stats()?;
 
-            println!("AvocadoDB Statistics");
-            println!("  Artifacts: {}", artifacts);
-            println!("  Spans: {}", spans);
-            println!("  Total tokens: {}", tokens);
+            // Calculate averages
+            let avg_tokens_per_span = if spans > 0 {
+                tokens / spans
+            } else {
+                0
+            };
+
+            let avg_spans_per_artifact = if artifacts > 0 {
+                spans / artifacts
+            } else {
+                0
+            };
+
+            // Print header
+            println!("\n{}", style("╔══════════════════════════════════════════════════════════════╗").cyan());
+            println!("{}", style("║         AvocadoDB Database Statistics                       ║").cyan());
+            println!("{}", style("╚══════════════════════════════════════════════════════════════╝").cyan());
+            println!();
+
+            // Main stats
+            println!("  {} {}",
+                style("Artifacts:").bold(),
+                style(format!("{}", artifacts)).cyan().bold()
+            );
+            println!("  {} {}",
+                style("Spans:    ").bold(),
+                style(format!("{}", spans)).cyan().bold()
+            );
+            println!("  {} {}",
+                style("Tokens:   ").bold(),
+                style(format!("{}", tokens)).cyan().bold()
+            );
+            println!();
+
+            // Averages
+            println!("  {} {}",
+                style("Avg tokens/span:   ").dim(),
+                style(format!("{}", avg_tokens_per_span)).yellow()
+            );
+            println!("  {} {}",
+                style("Avg spans/artifact:").dim(),
+                style(format!("{}", avg_spans_per_artifact)).yellow()
+            );
+            println!();
+
+            // Visual bar chart for token distribution
+            if spans > 0 {
+                println!("{}", style("  Token Distribution:").bold());
+                println!();
+
+                // Get individual span token counts for visualization
+                let all_spans = db.get_all_spans()?;
+
+                // Calculate buckets
+                let mut buckets = vec![0; 5];
+                let bucket_size = 200; // 0-200, 200-400, 400-600, 600-800, 800+
+
+                for span in &all_spans {
+                    let bucket_idx = (span.token_count / bucket_size).min(4);
+                    buckets[bucket_idx] += 1;
+                }
+
+                let max_count = *buckets.iter().max().unwrap_or(&1);
+
+                for (i, &count) in buckets.iter().enumerate() {
+                    let range = if i == 4 {
+                        format!("{}+", i * bucket_size)
+                    } else {
+                        format!("{}-{}", i * bucket_size, (i + 1) * bucket_size)
+                    };
+
+                    let bar_length = if max_count > 0 {
+                        (count as f32 / max_count as f32 * 40.0) as usize
+                    } else {
+                        0
+                    };
+
+                    let bar = "█".repeat(bar_length);
+                    let percentage = if spans > 0 {
+                        (count as f32 / spans as f32 * 100.0) as usize
+                    } else {
+                        0
+                    };
+
+                    println!(
+                        "    {:>8} tokens │{:<40}│ {} ({}%)",
+                        style(range).dim(),
+                        style(bar).cyan(),
+                        style(format!("{:>4}", count)).yellow(),
+                        style(format!("{:>2}", percentage)).dim()
+                    );
+                }
+                println!();
+            }
+
+            // Status indicator
+            if spans < 10 {
+                println!("  {} Small corpus - good for testing", style("ℹ").blue());
+            } else if spans < 1000 {
+                println!("  {} Optimal size for Phase 1", style("✓").green());
+            } else if spans < 10000 {
+                println!("  {} Large corpus - consider monitoring performance", style("⚠").yellow());
+            } else {
+                println!("  {} Very large corpus - Phase 2 HNSW recommended", style("⚠").yellow());
+            }
+            println!();
         }
 
         Commands::Clear { db_path, yes } => {

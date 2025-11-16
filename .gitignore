@@ -1,10 +1,9 @@
-# Rust
-/target
-Cargo.lock
+# Rust build artifacts
+/target/
 **/*.rs.bk
 *.pdb
 
-# Python
+# Python build artifacts
 __pycache__/
 *.py[cod]
 *$py.class
@@ -26,32 +25,97 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Virtual environments
 venv/
 ENV/
 env/
+.venv
 
-# IDEs
+# Node.js / TypeScript build artifacts
+node_modules/
+sdks/typescript/dist/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Internal development files
+.internal/
+.history/
+.cursor/
+
+# IDEs and editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
 
-# AvocadoDB data
+# AvocadoDB runtime data (NEVER commit!)
 .avocado/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.db
+*.db-journal
+
+# Test outputs and reports
+test-report-*.md
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.pytest_cache/
 
 # Logs
 *.log
+logs/
 
-# OS
+# OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
 
-# Environment
+# Environment and secrets (NEVER commit!)
 .env
 .env.local
+.env.*.local
+*.key
+*.pem
+credentials.json
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.#*
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+
+# Backup files
+*.bak
+*.backup
+*~

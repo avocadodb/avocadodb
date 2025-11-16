@@ -1,0 +1,48 @@
+{
+  "name": "avocadodb",
+  "version": "1.0.0",
+  "description": "Deterministic context database for AI agents - TypeScript SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "example": "ts-node example.ts"
+  },
+  "keywords": [
+    "rag",
+    "retrieval",
+    "context",
+    "database",
+    "ai",
+    "llm",
+    "deterministic",
+    "avocadodb"
+  ],
+  "author": "AvocadoDB Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/avocadodb/avocadodb"
+  },
+  "bugs": {
+    "url": "https://github.com/avocadodb/avocadodb/issues"
+  },
+  "homepage": "https://github.com/avocadodb/avocadodb#readme",
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-fetch": "^2.6.2",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
