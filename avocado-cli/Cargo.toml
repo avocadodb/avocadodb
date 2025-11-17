@@ -23,3 +23,10 @@ sha2 = { workspace = true }
 chrono = { workspace = true }
 indicatif = "0.17"
 console = "0.15"
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "embedding_bench"
+harness = false

@@ -1,0 +1,114 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "llama-index-avocadodb"
+version = "1.0.0"
+description = "LlamaIndex integration for AvocadoDB - deterministic, citation-backed document loading for RAG"
+authors = ["AvocadoDB Team <team@avocadodb.com>"]
+readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/avocadodb/llama-index-avocadodb"
+repository = "https://github.com/avocadodb/llama-index-avocadodb"
+documentation = "https://docs.avocadodb.com/integrations/llamaindex"
+keywords = ["llamaindex", "llama-index", "avocadodb", "rag", "retrieval", "deterministic", "citations"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+packages = [
+    { include = "llama_index_avocadodb", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+llama-index-core = ">=0.10.0,<0.12.0"
+avocadodb = "^1.0.0"
+typing-extensions = ">=4.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.0"
+pytest-cov = "^4.1.0"
+black = "^23.7.0"
+isort = "^5.12.0"
+mypy = "^1.5.0"
+ruff = "^0.0.287"
+
+[tool.poetry.group.test.dependencies]
+llama-index = ">=0.10.0,<0.12.0"
+llama-index-llms-openai = "^0.1.0"
+llama-index-embeddings-openai = "^0.1.0"
+pytest-mock = "^3.11.1"
+
+[tool.poetry.group.docs.dependencies]
+sphinx = "^7.1.0"
+sphinx-rtd-theme = "^1.3.0"
+sphinx-autodoc-typehints = "^1.24.0"
+myst-parser = "^2.0.0"
+
+[tool.poetry.group.examples.dependencies]
+jupyter = "^1.0.0"
+ipykernel = "^6.25.0"
+matplotlib = "^3.7.0"
+pandas = "^2.0.0"
+networkx = "^3.1.0"
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "C90", "I", "D"]
+ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = "-ra -q --strict-markers --cov=llama_index_avocadodb --cov-report=term-missing"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow tests",
+]
+
+[tool.coverage.run]
+source = ["src/llama_index_avocadodb"]
+omit = ["*/tests/*", "*/examples/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

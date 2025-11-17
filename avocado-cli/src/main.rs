@@ -2,6 +2,8 @@
 //!
 //! Simple CLI for interacting with AvocadoDB locally.
 
+mod commands;
+
 use anyhow::Result;
 use avocado_core::{compiler, db::Database, embedding, span, Artifact, CompilerConfig};
 use clap::{Parser, Subcommand};
@@ -104,6 +106,24 @@ enum Commands {
         /// Output as JSON
         #[arg(short, long)]
         json: bool,
+    },
+
+    /// Run performance benchmarks
+    Benchmark {
+        /// Show detailed statistics
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Recommend optimal embedding model
+    Recommend {
+        /// Corpus size (number of documents)
+        #[arg(long)]
+        corpus_size: Option<usize>,
+
+        /// Use case (e.g., "production", "legal", "code-search")
+        #[arg(long)]
+        use_case: Option<String>,
     },
 }
 
@@ -587,6 +607,17 @@ async fn main() -> Result<()> {
             // Print output
             let stdout = String::from_utf8_lossy(&output.stdout);
             print!("{}", stdout);
+        }
+
+        Commands::Benchmark { verbose } => {
+            commands::run_benchmark(verbose).await?;
+        }
+
+        Commands::Recommend {
+            corpus_size,
+            use_case,
+        } => {
+            commands::recommend_model(corpus_size, use_case.as_deref())?;
         }
     }
 

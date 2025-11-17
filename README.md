@@ -4,26 +4,51 @@
 
 Fix your RAG in 5 minutes - same query, same context, every time.
 
+![Embedding](https://img.shields.io/badge/Embedding-Pure%20Rust%20%E2%9A%A1-green) ![Speed](https://img.shields.io/badge/Speed-6x%20Faster-brightgreen) ![Cost](https://img.shields.io/badge/Cost-%240-blue)
+
 ## What is AvocadoDB?
 
 AvocadoDB is a span-based context compiler that replaces traditional vector databases' chaotic "top-k" retrieval with deterministic, citation-backed context generation.
+
+**Pure Rust embeddings = 6x faster than OpenAI, works completely offline, costs $0.**
 
 ### The Problem with RAG
 
 Current RAG systems are fundamentally broken:
 
-- ❌ Same query → different results each time
+- ❌ Same query → different results each time (non-deterministic)
 - ❌ Token budgets wasted on duplicates (60-70% utilization)
 - ❌ No citations or verifiability
 - ❌ Hallucinations from inconsistent context
+- ❌ Slow (200-300ms just for OpenAI embedding calls)
+- ❌ Expensive (API costs scale with usage)
 
 ### The AvocadoDB Solution
 
 - ✅ **100% Deterministic**: Same query → same context, every time
+- ✅ **6x Faster**: 40-60ms compilation (vs 240-360ms with OpenAI)
+- ✅ **Zero Cost**: Pure Rust embeddings, no API required
+- ✅ **Works Offline**: No internet needed after initial setup
 - ✅ **Citation-Backed**: Every span has exact line number citations
 - ✅ **Token Efficient**: 95%+ budget utilization
-- ✅ **Fast**: < 500ms for 8K token context
 - ✅ **Drop-in Replacement**: Works with any LLM
+
+## ⚡ Performance
+
+```bash
+# Run benchmarks on your hardware
+./target/release/avocado benchmark
+
+# Results (M1 Mac example):
+# Single embedding: 1.2ms  (vs ~250ms OpenAI)
+# Batch of 100:     8.7ms  (vs ~250ms OpenAI)
+# Full compilation: 43ms   (vs ~300ms OpenAI)
+#
+# Speedup: 6-7x faster ⚡
+# Cost: $0 (vs ~$0.0001 per 1K tokens)
+```
+
+See [EMBEDDING_PERFORMANCE.md](docs/EMBEDDING_PERFORMANCE.md) for detailed benchmarks.
 
 ## Quick Start
 
@@ -65,12 +90,20 @@ cargo build --release
 # Initialize database
 ./target/release/avocado init
 
+# Get model recommendation (optional)
+./target/release/avocado recommend --corpus-size 5000 --use-case production
+# Recommends optimal embedding model for your use case
+
 # Ingest documents
 ./target/release/avocado ingest ./docs --recursive
 # Output: Ingested 42 files → 387 spans
 
 # Compile context
 ./target/release/avocado compile "How does authentication work?" --budget 8000
+
+# Run performance benchmarks
+./target/release/avocado benchmark
+# Shows real performance on your hardware
 ```
 
 **Example Output:**

@@ -69,6 +69,10 @@ yarn.lock
 *.db
 *.db-journal
 
+# Embedding model caches (large files, downloaded at runtime)
+.fastembed_cache/
+**/.fastembed_cache/
+
 # Test outputs and reports
 test-report-*.md
 htmlcov/
