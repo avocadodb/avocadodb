@@ -48,6 +48,15 @@ from .ingest import AutoIngest, ProjectType
 # Utilities
 from .utils import count_tokens, format_citations, create_system_prompt, format_working_set
 
+# Optional LLM support
+try:
+    from .llm import TinyLlamaHelper, generate_answer
+    _llm_available = True
+except ImportError:
+    _llm_available = False
+    TinyLlamaHelper = None
+    generate_answer = None
+
 # Legacy compatibility
 from .deepagents_tool import avocado_compile_context as legacy_compile_context, compile_context
 
@@ -71,6 +80,9 @@ __all__ = [
     "format_citations",
     "create_system_prompt",
     "format_working_set",
+    # Optional LLM
+    "TinyLlamaHelper",
+    "generate_answer",
     # Legacy
     "legacy_compile_context",
     "compile_context",

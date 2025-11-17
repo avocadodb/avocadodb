@@ -8,6 +8,7 @@ The SDK has been completely refactored to be **framework-agnostic**, moving all 
 
 ### New Features
 
+- ✅ **Local LLM Support**: Optional TinyLlama integration for natural language answers
 - ✅ **Server Lifecycle Management**: Auto-start, health checks, daemon mode
 - ✅ **Background File Monitoring**: Auto-detect and re-ingest changed files
 - ✅ **Smart Auto-Ingest**: Project type detection (Python/Node/Rust/Go/etc.)
@@ -18,13 +19,18 @@ The SDK has been completely refactored to be **framework-agnostic**, moving all 
 ## 📦 Installation
 
 ```bash
+# Basic installation (RAG only)
 pip install avocadodb
+
+# With LLM support (TinyLlama)
+pip install avocadodb[llm]
 ```
 
 Or from source:
 ```bash
 cd sdks/python
-pip install -e .
+pip install -e .          # Basic
+pip install -e .[llm]     # With LLM support
 ```
 
 ## 🎯 Quick Start
@@ -47,6 +53,25 @@ print(result.text)
 # Show citations
 for citation in result.citations:
     print(f"  - {citation.artifact_path}:{citation.start_line}-{citation.end_line}")
+```
+
+### Ask Questions (v2.0 - New!)
+
+Get natural language answers using TinyLlama:
+
+```python
+from avocado import AvocadoDB
+
+db = AvocadoDB("http://localhost:8765")
+
+# Ask a question - uses TinyLlama if available
+answer = db.ask("How does authentication work?")
+print(answer)
+
+# Options:
+# - llm="auto" (default): Try TinyLlama, fallback to context
+# - llm="local": Require TinyLlama (raises error if not available)
+# - llm="none": Just return context (same as compile())
 ```
 
 ### With Auto-Management

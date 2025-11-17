@@ -10,6 +10,7 @@ use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use sha2::Digest;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -78,6 +79,32 @@ enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
+
+    /// Ask a question and get a natural language answer (v2.0)
+    Ask {
+        /// The question to ask
+        query: String,
+
+        /// LLM mode: auto (try local, fallback), local (require), none (just context)
+        #[arg(long, default_value = "auto")]
+        llm: String,
+
+        /// Token budget for context compilation
+        #[arg(short, long, default_value = "8000")]
+        budget: usize,
+
+        /// Maximum tokens for answer generation
+        #[arg(long, default_value = "150")]
+        max_tokens: usize,
+
+        /// AvocadoDB server URL
+        #[arg(long, default_value = "http://localhost:8765")]
+        url: String,
+
+        /// Output as JSON
+        #[arg(short, long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -131,69 +158,120 @@ async fn main() -> Result<()> {
             overall_pb.set_message("starting");
 
             let mut total_spans = 0;
+            let mut successful = 0;
+            let mut failed = 0;
 
-            for (idx, file_path) in files.iter().enumerate() {
-                let content = fs::read_to_string(file_path)?;
+            for (_idx, file_path) in files.iter().enumerate() {
+                // Wrap each file in error handling so we continue even if one fails
+                let file_result: Result<usize, anyhow::Error> = async {
+                    // Try to read file as text, skip if it fails (binary files, etc.)
+                    let content = match fs::read_to_string(file_path) {
+                        Ok(c) => c,
+                        Err(_e) => {
+                            // Skip binary files or unreadable files
+                            return Ok(0);
+                        }
+                    };
 
-                // Create artifact
-                let artifact_id = Uuid::new_v4().to_string();
-                let content_hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
+                    // Create artifact
+                    let artifact_id = Uuid::new_v4().to_string();
+                    let content_hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
 
-                let artifact = Artifact {
-                    id: artifact_id.clone(),
-                    path: file_path.display().to_string(),
-                    content: content.clone(),
-                    content_hash,
-                    metadata: None,
-                    created_at: chrono::Utc::now(),
-                };
+                    let artifact = Artifact {
+                        id: artifact_id.clone(),
+                        path: file_path.display().to_string(),
+                        content: content.clone(),
+                        content_hash,
+                        metadata: None,
+                        created_at: chrono::Utc::now(),
+                    };
 
-                db.insert_artifact(&artifact)?;
+                    // Try to insert artifact (might fail if duplicate)
+                    if let Err(_e) = db.insert_artifact(&artifact) {
+                        // Skip if already exists or other error
+                        return Ok(0);
+                    }
 
-                // Extract spans
-                let mut spans = span::extract_spans(&content, &artifact_id)?;
+                    // Extract spans
+                    let mut spans = match span::extract_spans(&content, &artifact_id) {
+                        Ok(s) => s,
+                        Err(_e) => {
+                            // Skip if span extraction fails
+                            return Ok(0);
+                        }
+                    };
 
-                // Show file progress
-                let file_name = file_path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
+                    // Show file progress
+                    let file_name = file_path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown");
 
-                overall_pb.set_message(format!("{} ({} spans)", file_name, spans.len()));
+                    overall_pb.set_message(format!("{} ({} spans)", file_name, spans.len()));
 
-                // Create progress bar for embedding
-                let embed_pb = multi.add(ProgressBar::new(spans.len() as u64));
-                embed_pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template("  {spinner:.green} Embedding: [{bar:30.cyan/blue}] {pos}/{len} spans")
-                        .unwrap()
-                        .progress_chars("=>-")
-                );
+                    // Create progress bar for embedding
+                    let embed_pb = multi.add(ProgressBar::new(spans.len() as u64));
+                    embed_pb.set_style(
+                        ProgressStyle::default_bar()
+                            .template("  {spinner:.green} Embedding: [{bar:30.cyan/blue}] {pos}/{len} spans")
+                            .unwrap()
+                            .progress_chars("=>-")
+                    );
 
-                // Embed spans in smaller batches to show progress
-                let batch_size = 10;
-                let mut all_embeddings = Vec::new();
+                    // Embed spans in batches for efficiency
+                    // OpenAI allows up to 2048 inputs per request, but we use 100 for:
+                    // - Better progress visibility
+                    // - Lower risk of hitting token limits per request
+                    // - Still 10x faster than batch_size=10
+                    let batch_size = 100;
+                    let mut all_embeddings = Vec::new();
 
-                // Collect texts and embed in batches
-                {
-                    let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
+                    // Collect texts and embed in batches
+                    {
+                        let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
 
-                    for text_batch in texts.chunks(batch_size) {
-                        let embeddings = embedding::embed_batch(text_batch.to_vec(), None).await?;
-                        all_embeddings.extend(embeddings);
-                        embed_pb.inc(text_batch.len() as u64);
+                        for text_batch in texts.chunks(batch_size) {
+                            let embeddings = match embedding::embed_batch(text_batch.to_vec(), None, None).await {
+                                Ok(e) => e,
+                                Err(_e) => {
+                                    // Skip if embedding fails (API error, etc.)
+                                    embed_pb.finish_and_clear();
+                                    return Ok(0);
+                                }
+                            };
+                            all_embeddings.extend(embeddings);
+                            embed_pb.inc(text_batch.len() as u64);
+                        }
+                    }
+
+                    // Now update spans with embeddings
+                    for (span, emb) in spans.iter_mut().zip(all_embeddings.iter()) {
+                        span.embedding = Some(emb.clone());
+                        span.embedding_model = Some(embedding::embedding_model().to_string());
+                    }
+
+                    embed_pb.finish_and_clear();
+
+                    // Insert spans (might fail, but continue anyway)
+                    if let Err(_e) = db.insert_spans(&spans) {
+                        return Ok(0);
+                    }
+
+                    Ok(spans.len())
+                }.await;
+
+                match file_result {
+                    Ok(span_count) => {
+                        if span_count > 0 {
+                            total_spans += span_count;
+                            successful += 1;
+                        } else {
+                            failed += 1;
+                        }
+                    }
+                    Err(_e) => {
+                        failed += 1;
                     }
                 }
-
-                // Now update spans with embeddings
-                for (span, emb) in spans.iter_mut().zip(all_embeddings.iter()) {
-                    span.embedding = Some(emb.clone());
-                    span.embedding_model = Some(embedding::embedding_model().to_string());
-                }
-
-                embed_pb.finish_and_clear();
-
-                db.insert_spans(&spans)?;
-                total_spans += spans.len();
 
                 overall_pb.inc(1);
             }
@@ -201,10 +279,12 @@ async fn main() -> Result<()> {
             overall_pb.finish_with_message(format!("{} spans created", total_spans));
 
             println!(
-                "\n{} Indexed {} files → {} spans",
+                "\n{} Indexed {} files → {} spans ({} successful, {} failed/skipped)",
                 style("✓").green().bold(),
-                style(files.len()).cyan().bold(),
-                style(total_spans).cyan().bold()
+                style(successful).cyan().bold(),
+                style(total_spans).cyan().bold(),
+                style(successful).green(),
+                style(failed).yellow()
             );
         }
 
@@ -224,27 +304,34 @@ async fn main() -> Result<()> {
 
             let db = Database::new(&db_path)?;
 
-            // Show loading spinner
-            let spinner = if !json {
-                let sp = ProgressBar::new_spinner();
-                sp.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{spinner:.green} {msg}")
-                        .unwrap()
-                );
-                sp.set_message("Loading spans from database...");
-                sp.enable_steady_tick(std::time::Duration::from_millis(100));
-                Some(sp)
-            } else {
-                None
-            };
+    // Show loading spinner
+    let spinner = if !json {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} {msg}")
+                .unwrap()
+        );
+        sp.set_message("Loading vector index...");
+        sp.enable_steady_tick(std::time::Duration::from_millis(100));
+        Some(sp)
+    } else {
+        None
+    };
 
-            // Get cached vector index (rebuilds only if data changed)
-            if let Some(sp) = &spinner {
-                sp.set_message("Loading vector index...");
-            }
+    // Get cached vector index (rebuilds only if data changed)
+    // Note: For large repos, this can take 1-2 minutes on first query
+    // Subsequent queries in the same session are fast (index stays in memory)
+    // For best performance with large repos, use server mode
+    if let Some(sp) = &spinner {
+        sp.set_message("Building/loading vector index (this may take 1-2 min for large repos)...");
+    }
 
-            let index = db.get_vector_index()?;
+    let index = db.get_vector_index()?;
+    
+    if let Some(sp) = &spinner {
+        sp.set_message("Compiling context...");
+    }
 
             // Compile context
             let config = CompilerConfig {
@@ -434,6 +521,73 @@ async fn main() -> Result<()> {
             db.clear()?;
             println!("✓ Cleared all data");
         }
+
+        Commands::Ask {
+            query,
+            llm,
+            budget,
+            max_tokens,
+            url,
+            json,
+        } => {
+            // Find the ask.py script
+            // Try multiple locations:
+            // 1. Relative to current directory (development)
+            // 2. Relative to executable (installed)
+            // 3. In cargo target directory (during build)
+            let mut script_paths = vec![
+                PathBuf::from("avocado-cli/scripts/ask.py"),
+                PathBuf::from("../avocado-cli/scripts/ask.py"),
+            ];
+
+            // Try relative to executable
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    script_paths.push(exe_dir.join("scripts").join("ask.py"));
+                    script_paths.push(exe_dir.parent().unwrap_or(exe_dir).join("avocado-cli").join("scripts").join("ask.py"));
+                }
+            }
+
+            // Find first existing script
+            let script = script_paths
+                .iter()
+                .find(|p| p.exists())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Could not find ask.py script. Tried: {}. \
+                        Please ensure the script exists in avocado-cli/scripts/ask.py",
+                        script_paths.iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?;
+
+            // Build command
+            let mut cmd = Command::new("python3");
+            cmd.arg(&script);
+            cmd.arg(&query);
+            cmd.arg("--url").arg(&url);
+            cmd.arg("--budget").arg(budget.to_string());
+            cmd.arg("--llm").arg(&llm);
+            cmd.arg("--max-tokens").arg(max_tokens.to_string());
+            if json {
+                cmd.arg("--json");
+            }
+
+            // Run and capture output
+            let output = cmd.output()?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("{}", stderr);
+                return Err(anyhow::anyhow!("Ask command failed"));
+            }
+
+            // Print output
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            print!("{}", stdout);
+        }
     }
 
     Ok(())
@@ -442,10 +596,30 @@ async fn main() -> Result<()> {
 /// Collect files from a directory
 fn collect_files(dir: &PathBuf, recursive: bool) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
+    
+    // Directories to skip (common build artifacts, dependencies, etc.)
+    let skip_dirs: &[&str] = &[
+        ".git", ".svn", ".hg",
+        "node_modules", ".node_modules",
+        "venv", ".venv", "env", ".env",
+        "__pycache__", ".pytest_cache",
+        "target", "build", "dist", "out",
+        ".next", ".cache", ".tox",
+        "vendor", ".bundle",
+        ".idea", ".vscode", ".vs",
+        ".avocado",  // Skip AvocadoDB's own database directory
+    ];
 
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
+        
+        // Skip if it's a skip directory
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if skip_dirs.contains(&name) {
+                continue;
+            }
+        }
 
         if path.is_file() {
             files.push(path);

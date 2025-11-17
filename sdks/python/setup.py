@@ -14,7 +14,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="avocadodb",
-    version="1.0.0",
+    version="2.0.0",
     author="AvocadoDB Team",
     author_email="hello@avocadodb.com",
     description="Deterministic context database for AI agents - Python SDK",
@@ -46,6 +46,10 @@ setup(
         "requests>=2.28.0",
     ],
     extras_require={
+        "llm": [
+            "transformers>=4.35.0",
+            "torch>=2.0.0",
+        ],
         "dev": [
             "pytest>=7.0",
             "pytest-cov>=4.0",

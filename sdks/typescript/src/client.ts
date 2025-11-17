@@ -243,4 +243,192 @@ export class AvocadoDB {
       return false;
     }
   }
+
+  /**
+   * Ask a question and get a natural language answer (v2.0)
+   * Uses TinyLlama to generate answers from AvocadoDB context.
+   * Falls back to returning context text if LLM is not available.
+   *
+   * @param query - The question to ask
+   * @param options - Options for asking
+   * @returns Natural language answer as string, or context text if LLM unavailable
+   */
+  async ask(
+    query: string,
+    options: {
+      /** LLM mode: "auto" (try local, fallback), "local" (require), "none" (just context) */
+      llm?: 'auto' | 'local' | 'none';
+      /** Token budget for context compilation (default: 8000) */
+      budget?: number;
+      /** Maximum tokens for answer generation (default: 150) */
+      maxTokens?: number;
+      /** Use deterministic generation (default: true) */
+      deterministic?: boolean;
+    } = {}
+  ): Promise<string> {
+    const {
+      llm = 'auto',
+      budget = 8000,
+      maxTokens = 150,
+      deterministic = true,
+    } = options;
+
+    // Get context first
+    const context = await this.compile(query, { budget });
+
+    // If llm is "none", just return context
+    if (llm === 'none') {
+      return context.text;
+    }
+
+    // Try to use Python SDK's ask() method
+    try {
+      return await this._callPythonAsk(query, {
+        llm,
+        budget,
+        maxTokens,
+        deterministic,
+      });
+    } catch (error) {
+      // If Python SDK not available or failed, fallback to context
+      if (llm === 'local') {
+        throw new Error(
+          `TinyLlama not available: ${error}. Install Python SDK with: pip install avocadodb[llm]`
+        );
+      }
+      // For "auto" mode, just return context
+      return context.text;
+    }
+  }
+
+  /**
+   * Internal method to call Python SDK's ask() method
+   * @private
+   */
+  private async _callPythonAsk(
+    query: string,
+    options: {
+      llm: string;
+      budget: number;
+      maxTokens: number;
+      deterministic: boolean;
+    }
+  ): Promise<string> {
+    const { spawn } = await import('child_process');
+    const pathModule = await import('path');
+    const fs = await import('fs/promises');
+
+    // Find the ask.py script or create a temporary Python script
+    const projectRoot = this._findProjectRoot();
+    const askScript = pathModule.join(projectRoot, 'avocado-cli', 'scripts', 'ask.py');
+
+    // If ask.py exists, use it; otherwise create inline Python code
+    let pythonArgs: string[];
+    let pythonCode: string;
+
+    try {
+      await fs.access(askScript);
+      // Use the ask.py script
+      pythonArgs = [
+        askScript,
+        query,
+        '--url', this.baseUrl,
+        '--budget', options.budget.toString(),
+        '--llm', options.llm,
+        '--max-tokens', options.maxTokens.toString(),
+      ];
+      pythonCode = '';
+    } catch {
+      // Fallback: inline Python code
+      const escapedQuery = query.replace(/'/g, "\\'").replace(/\n/g, '\\n');
+      pythonCode = `
+import sys
+import os
+# Try to find SDK in common locations
+sdk_paths = [
+    os.path.join(os.getcwd(), 'sdks', 'python'),
+    os.path.join(os.path.dirname(__file__), '..', 'sdks', 'python'),
+    os.path.expanduser('~/.local/lib/python3.*/site-packages'),
+]
+for sdk_path in sdk_paths:
+    if os.path.exists(sdk_path):
+        sys.path.insert(0, sdk_path)
+        break
+
+from avocado import AvocadoDB
+
+db = AvocadoDB(url='${this.baseUrl}')
+answer = db.ask(
+    query='${escapedQuery}',
+    llm='${options.llm}',
+    budget=${options.budget},
+    max_new_tokens=${options.maxTokens},
+    deterministic=${options.deterministic}
+)
+print(answer)
+`;
+      pythonArgs = ['-c', pythonCode];
+    }
+
+    return new Promise((resolve, reject) => {
+      const python = spawn('python3', pythonArgs);
+
+      let stdout = '';
+      let stderr = '';
+
+      python.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      python.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      python.on('close', (code) => {
+        if (code === 0) {
+          resolve(stdout.trim());
+        } else {
+          reject(new Error(`Python SDK call failed: ${stderr || 'Unknown error'}`));
+        }
+      });
+
+      python.on('error', (error) => {
+        reject(new Error(`Failed to spawn Python process: ${error.message}`));
+      });
+    });
+  }
+
+  /**
+   * Find the project root directory
+   * @private
+   */
+  private _findProjectRoot(): string {
+    const pathModule = require('path');
+    const fs = require('fs');
+    let currentDir = process.cwd();
+    
+    // Look for common project root indicators
+    const indicators = ['avocado-cli', 'sdks', 'Cargo.toml', 'package.json'];
+    
+    for (let i = 0; i < 10; i++) {
+      for (const indicator of indicators) {
+        const checkPath = pathModule.join(currentDir, indicator);
+        try {
+          if (fs.existsSync(checkPath)) {
+            return currentDir;
+          }
+        } catch {
+          // Continue searching
+        }
+      }
+      
+      const parent = pathModule.dirname(currentDir);
+      if (parent === currentDir) {
+        break; // Reached filesystem root
+      }
+      currentDir = parent;
+    }
+    
+    return process.cwd(); // Fallback to current directory
+  }
 }

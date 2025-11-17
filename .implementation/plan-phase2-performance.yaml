@@ -1,0 +1,355 @@
+# AvocadoDB Phase 2 - Performance Optimizations for Large Repositories
+# Focused plan for HNSW, persistence, and incremental updates
+
+metadata:
+  project: AvocadoDB
+  phase: 2.0
+  version: 2.0.0
+  duration: 3_weeks
+  start_date: "2025-11-18"  # After Phase 1 completion
+  core_objective: "Make AvocadoDB viable for large repositories (500K+ lines, 10K+ spans)"
+  success_metric: "Query time < 20ms for 50K spans, sub-second server startup"
+
+# Global configuration
+global_config:
+  repository: "github.com/avocadodb/avocadodb"
+  language: rust
+  min_rust_version: "1.75.0"
+  database: sqlite
+  
+  tech_stack:
+    core_engine: rust
+    vector_index: hnsw_rs  # NEW: HNSW for fast approximate search
+    lexical_search: sqlite_fts5  # NEW: FTS5 for fast text search
+    persistence: serde + bincode  # For saving/loading HNSW index
+
+# Phase 2 Performance Priorities (in order)
+priorities:
+  - priority: 1
+    name: "HNSW Vector Index"
+    description: "Replace brute-force search with HNSW for 10-100x speedup"
+    weeks: 1
+    critical: true
+    
+  - priority: 2
+    name: "Persistent Index"
+    description: "Save/load HNSW index to disk for instant startup"
+    weeks: 1-2
+    critical: true
+    
+  - priority: 3
+    name: "Incremental Updates"
+    description: "Only re-index changed files, update index incrementally"
+    weeks: 2-3
+    critical: true
+
+# MUST HAVE - Core deliverables
+must_have:
+  priority_1_hnsw_index:
+    weeks: 1
+    description: "Implement HNSW vector index for fast approximate nearest neighbor search"
+    
+    tasks:
+      - task: "Add hnsw-rs dependency"
+        complexity: "Low"
+        estimate: "30 minutes"
+        steps:
+          - "Add hnsw-rs to Cargo.toml"
+          - "Research optimal HNSW parameters (M, ef_construction, ef_search)"
+          - "Test with different parameter combinations"
+        
+      - task: "Replace VectorIndex with HNSW-backed implementation"
+        complexity: "High"
+        estimate: "1 day"
+        dependencies: ["hnsw-rs dependency"]
+        steps:
+          - "Create new HNSWVectorIndex struct in avocado-core/src/index.rs"
+          - "Implement build() method to construct HNSW from spans"
+          - "Implement search() method using HNSW approximate search"
+          - "Maintain same API as current VectorIndex for drop-in replacement"
+          - "Add configuration for HNSW parameters (M=16, ef_construction=200, ef_search=50)"
+        
+      - task: "Performance testing and validation"
+        complexity: "Medium"
+        estimate: "4 hours"
+        dependencies: ["HNSW implementation"]
+        steps:
+          - "Create benchmark test with 10K, 50K, 100K spans"
+          - "Compare brute-force vs HNSW search times"
+          - "Validate search quality (recall@k) - ensure >95% recall"
+          - "Test determinism (same query → same results)"
+          - "Profile memory usage"
+        
+      - task: "Integration with compiler"
+        complexity: "Low"
+        estimate: "2 hours"
+        dependencies: ["HNSW implementation", "Performance testing"]
+        steps:
+          - "Update compiler.rs to use HNSWVectorIndex"
+          - "Ensure backward compatibility"
+          - "Update tests"
+    
+    success_criteria:
+      - "Search time < 20ms for 50K spans (vs 250ms brute-force)"
+      - "Recall@50 > 95% (quality maintained)"
+      - "Deterministic results (same query → same hash)"
+      - "All existing tests pass"
+    
+    risks:
+      - risk: "HNSW parameters not optimal for our use case"
+        mitigation: "Benchmark multiple parameter sets, choose best trade-off"
+      - risk: "Approximate search affects determinism"
+        mitigation: "Use fixed random seed, validate determinism tests"
+      - risk: "Memory usage too high"
+        mitigation: "Profile and optimize, consider disk-backed index"
+
+  priority_2_persistent_index:
+    weeks: 1-2
+    description: "Save/load HNSW index to disk for instant startup and multi-project support"
+    
+    tasks:
+      - task: "Design index persistence format"
+        complexity: "Medium"
+        estimate: "2 hours"
+        steps:
+          - "Choose serialization format (bincode for speed, or JSON for debugging)"
+          - "Design index file format (version, metadata, HNSW data)"
+          - "Plan for index versioning and migration"
+        
+      - task: "Implement save/load for HNSW index"
+        complexity: "Medium"
+        estimate: "1 day"
+        dependencies: ["HNSW implementation", "Persistence format"]
+        steps:
+          - "Add save_to_file() method to HNSWVectorIndex"
+          - "Add load_from_file() method to HNSWVectorIndex"
+          - "Handle errors gracefully (corrupted index, version mismatch)"
+          - "Add index file path to Database struct"
+        
+      - task: "Update Database to use persistent index"
+        complexity: "Medium"
+        estimate: "4 hours"
+        dependencies: ["Save/load implementation"]
+        steps:
+          - "Modify get_vector_index() to check for saved index first"
+          - "Save index after building or updating"
+          - "Invalidate saved index when spans change"
+          - "Add index file path to .avocado/ directory"
+        
+      - task: "Multi-project index management"
+        complexity: "Low"
+        estimate: "2 hours"
+        dependencies: ["Persistent index"]
+        steps:
+          - "Store index per database path"
+          - "Update CLI mode to use project-specific index"
+          - "Test with multiple projects simultaneously"
+    
+    success_criteria:
+      - "Server startup < 1 second (vs 5-10 seconds rebuilding)"
+      - "Index file size reasonable (< 100MB for 50K spans)"
+      - "Index loads correctly after restart"
+      - "Multiple projects can have separate indexes"
+    
+    risks:
+      - risk: "Index file corruption"
+        mitigation: "Add checksums, rebuild on corruption"
+      - risk: "Index file too large"
+        mitigation: "Compress index, or use memory-mapped files"
+      - risk: "Index version incompatibility"
+        mitigation: "Version index format, auto-rebuild on mismatch"
+
+  priority_3_incremental_updates:
+    weeks: 2-3
+    description: "Only re-index changed files, update HNSW index incrementally"
+    
+    tasks:
+      - task: "Add file change tracking"
+        complexity: "Medium"
+        estimate: "1 day"
+        steps:
+          - "Add file_mtime (modification time) to artifacts table"
+          - "Update ingest to store mtime"
+          - "Add method to detect changed files (compare mtime)"
+          - "Add method to get files that need re-indexing"
+        
+      - task: "Implement span diffing"
+        complexity: "High"
+        estimate: "2 days"
+        dependencies: ["File change tracking"]
+        steps:
+          - "Create diff_spans() function to compare old vs new spans"
+          - "Identify added, removed, and modified spans"
+          - "Handle content hash changes (span text changed)"
+          - "Handle line number changes (span moved)"
+        
+      - task: "Incremental HNSW updates"
+        complexity: "High"
+        estimate: "2 days"
+        dependencies: ["Span diffing", "HNSW implementation"]
+        steps:
+          - "Add remove() method to HNSWVectorIndex (remove old spans)"
+          - "Add add() method to HNSWVectorIndex (add new spans)"
+          - "Update index incrementally instead of rebuilding"
+          - "Save updated index to disk"
+        
+      - task: "Update ingest workflow"
+        complexity: "Medium"
+        estimate: "1 day"
+        dependencies: ["Incremental updates"]
+        steps:
+          - "Modify ingest to check for existing artifacts"
+          - "Only process changed files"
+          - "Update index incrementally for changed files"
+          - "Add --force flag to force full re-index"
+        
+      - task: "CLI incremental ingest command"
+        complexity: "Low"
+        estimate: "2 hours"
+        dependencies: ["Incremental updates"]
+        steps:
+          - "Add 'avocado ingest --incremental' command"
+          - "Only process changed files"
+          - "Show progress for changed vs unchanged files"
+    
+    success_criteria:
+      - "Re-indexing changed file takes < 1 second (vs minutes for full)"
+      - "Index update time scales with changed files, not total files"
+      - "No data loss or corruption during incremental updates"
+      - "Full re-index still works (--force flag)"
+    
+    risks:
+      - risk: "HNSW doesn't support efficient incremental updates"
+        mitigation: "Research HNSW update strategies, or rebuild only affected subgraph"
+      - risk: "Index quality degrades over time with incremental updates"
+        mitigation: "Periodic full rebuild, or validate index quality"
+      - risk: "Complex edge cases in span diffing"
+        mitigation: "Comprehensive testing, fallback to full re-index on errors"
+
+# Performance Targets
+performance_targets:
+  search_time:
+    description: "Semantic search time for different corpus sizes"
+    targets:
+      - spans: 1000
+        current: "5ms"
+        target: "2ms"
+      - spans: 10000
+        current: "50ms"
+        target: "10ms"
+      - spans: 50000
+        current: "250ms"
+        target: "15ms"
+      - spans: 100000
+        current: "500ms"
+        target: "20ms"
+  
+  startup_time:
+    description: "Server startup time (loading index)"
+    targets:
+      - spans: 10000
+        current: "5-10 seconds (rebuild)"
+        target: "< 500ms (load from disk)"
+      - spans: 50000
+        current: "30-60 seconds (rebuild)"
+        target: "< 1 second (load from disk)"
+  
+  update_time:
+    description: "Time to update index for changed files"
+    targets:
+      - changed_files: 1
+        current: "Full rebuild (minutes)"
+        target: "< 1 second"
+      - changed_files: 10
+        current: "Full rebuild (minutes)"
+        target: "< 5 seconds"
+      - changed_files: 100
+        current: "Full rebuild (minutes)"
+        target: "< 30 seconds"
+
+# Testing Strategy
+testing:
+  unit_tests:
+    - "HNSW search correctness (recall@k)"
+    - "Index persistence (save/load)"
+    - "Incremental update correctness"
+    - "Determinism validation"
+  
+  integration_tests:
+    - "Full workflow with 10K spans"
+    - "Full workflow with 50K spans"
+    - "Multi-project index isolation"
+    - "Index corruption recovery"
+  
+  benchmarks:
+    - "Search time vs corpus size"
+    - "Index build time vs corpus size"
+    - "Index load time vs corpus size"
+    - "Incremental update time vs changed files"
+    - "Memory usage vs corpus size"
+
+# Week-by-week Timeline
+timeline:
+  week_1:
+    goals: "HNSW integration and persistence"
+    deliverables:
+      - "HNSW vector index implemented"
+      - "Search time < 20ms for 50K spans"
+      - "Index persistence working"
+      - "Server startup < 1 second"
+    checkpoint: "GO/NO-GO: Is HNSW fast enough?"
+  
+  week_2:
+    goals: "Incremental updates foundation"
+    deliverables:
+      - "File change tracking implemented"
+      - "Span diffing working"
+      - "Incremental index updates working"
+      - "Re-indexing changed file < 1 second"
+    checkpoint: "GO/NO-GO: Are incremental updates correct?"
+  
+  week_3:
+    goals: "Polish and optimization"
+    deliverables:
+      - "CLI incremental ingest command"
+      - "All performance targets met"
+      - "Comprehensive tests passing"
+      - "Documentation updated"
+    checkpoint: "Ready for production use?"
+
+# Success Criteria
+success_criteria:
+  technical:
+    - "Query time < 20ms for 50K spans"
+    - "Server startup < 1 second"
+    - "Incremental update < 1 second per file"
+    - "Recall@50 > 95% (quality maintained)"
+    - "100% determinism (same query → same hash)"
+    - "All existing tests pass"
+  
+  product:
+    - "500K line repo feels as responsive as 10K line repo"
+    - "No user-visible performance degradation"
+    - "Backward compatible with Phase 1"
+  
+  community:
+    - "Performance benchmarks published"
+    - "Migration guide for large repos"
+    - "Example with 50K+ spans"
+
+# Definition of Done
+done_when:
+  - "HNSW index implemented and tested"
+  - "Persistent index saves/loads correctly"
+  - "Incremental updates work for changed files"
+  - "All performance targets met"
+  - "All tests passing"
+  - "Documentation updated"
+  - "Backward compatible with Phase 1"
+
+# The One Metric That Matters
+north_star_metric: |
+  Query time for 50K spans: < 20ms (vs 250ms brute-force)
+  
+  This makes large repositories (500K+ lines) as responsive as small ones.
+

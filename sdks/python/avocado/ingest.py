@@ -179,7 +179,7 @@ class AutoIngest:
     def ingest_project(
         self,
         path: str | Path = ".",
-        max_files: int = 100,
+        max_files: int = 1000,
         include_source: bool = True,
         include_docs: bool = True,
     ) -> dict:
@@ -192,7 +192,7 @@ class AutoIngest:
 
         Args:
             path: Project directory to ingest (default: current directory)
-            max_files: Maximum number of files to ingest (default: 100)
+            max_files: Maximum number of files to ingest (default: 1000)
             include_source: Include source code files (default: True)
             include_docs: Include documentation files (default: True)
 
@@ -240,7 +240,7 @@ class AutoIngest:
                         ".next", ".cache", ".tox", "vendor"
                     ])
                 ]
-                paths_to_ingest.extend(matching[:50])  # Limit per pattern
+                paths_to_ingest.extend(matching[:500])  # Increased limit per pattern
             except:
                 pass
 

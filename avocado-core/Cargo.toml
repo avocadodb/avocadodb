@@ -20,6 +20,17 @@ sha2 = { workspace = true }
 parking_lot = { workspace = true }
 log = { workspace = true }
 tiktoken-rs = { workspace = true }
+# HNSW for fast approximate nearest neighbor search (Phase 2)
+hnsw_rs = "0.3"
+# Bincode for fast binary serialization of index metadata
+bincode = "1.3"
+fastembed = "5.2.0"
+# Pure Rust embeddings using fastembed (ONNX-based, no Python required)
+# Falls back to Python subprocess, then hash-based if needed
+# 
+# Primary: fastembed with all-MiniLM-L6-v2 (pure Rust, fast, semantic)
+# Fallback: Python sentence-transformers (if fastembed unavailable)
+# Final: Hash-based (deterministic, but NOT semantic)
 
 [dev-dependencies]
 tokio-test = "0.4"

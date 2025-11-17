@@ -6,9 +6,10 @@
 use crate::types::{Artifact, Result, Span};
 use crate::index::VectorIndex;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use sha2::{Digest, Sha256};
 
 /// Database connection wrapper with thread-safe access
 #[derive(Clone)]
@@ -18,6 +19,8 @@ pub struct Database {
     vector_index: Arc<RwLock<Option<Arc<VectorIndex>>>>,
     // Flag to track if index needs rebuilding (invalidated on ingest)
     index_dirty: Arc<AtomicBool>,
+    // Path to database file (for index cache location)
+    db_path: PathBuf,
 }
 
 impl Database {
@@ -31,7 +34,8 @@ impl Database {
     ///
     /// A new Database instance
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let db_path = path.as_ref().to_path_buf();
+        let conn = Connection::open(&db_path)?;
 
         // Run migrations (without PRAGMA statements)
         let schema = include_str!("../../migrations/001_initial.sql");
@@ -56,6 +60,7 @@ impl Database {
             conn: Arc::new(Mutex::new(conn)),
             vector_index: Arc::new(RwLock::new(None)),
             index_dirty: Arc::new(AtomicBool::new(true)),
+            db_path,
         })
     }
 
@@ -85,6 +90,8 @@ impl Database {
         )?;
         // Invalidate cached index since we added a new artifact
         self.index_dirty.store(true, Ordering::Release);
+        // Delete index cache directory since it's now stale
+        let _ = std::fs::remove_dir_all(self.get_index_cache_dir());
         Ok(())
     }
 
@@ -125,13 +132,15 @@ impl Database {
         tx.commit()?;
         // Invalidate cached index since we added new spans
         self.index_dirty.store(true, Ordering::Release);
+        // Delete index cache directory since it's now stale
+        let _ = std::fs::remove_dir_all(self.get_index_cache_dir());
         Ok(())
     }
 
     /// Get or build the cached vector index
     ///
     /// The index is cached and only rebuilt when data changes (on ingest).
-    /// This avoids loading all spans and rebuilding the index on every compile request.
+    /// Phase 2.1: Tries to load from disk first, then builds if needed.
     ///
     /// # Returns
     ///
@@ -139,9 +148,29 @@ impl Database {
     pub fn get_vector_index(&self) -> Result<Arc<VectorIndex>> {
         // Check if index needs rebuilding
         if self.index_dirty.load(Ordering::Acquire) {
-            // Rebuild index
+            // Try to load from disk first (Phase 2.1 persistent index)
+            let cache_dir = self.get_index_cache_dir();
+            if let Ok(index) = self.load_index_from_disk(&cache_dir) {
+                // Index loaded successfully from cache
+                // Note: We still rebuild HNSW from cached spans due to lifetime constraints in hnsw_rs
+                // This is faster than loading from SQLite, but not as fast as loading HNSW structure directly
+                let mut cached = self.vector_index.write()
+                    .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
+                *cached = Some(index.clone());
+                self.index_dirty.store(false, Ordering::Release);
+                return Ok(index);
+            }
+            
+            // Build index from spans (load from SQLite)
+            // For large repos, this can take 1-2 minutes
             let spans = self.get_all_spans()?;
             let index = Arc::new(VectorIndex::build(spans));
+            
+            // Save to disk for next time (Phase 2.1)
+            // This saves both HNSW dump files and spans cache
+            // Note: HNSW structure can't be directly loaded due to lifetime constraints,
+            // but caching spans still provides significant speedup (avoids SQLite queries)
+            let _ = self.save_index_to_disk(&cache_dir, &index);
             
             // Update cache
             let mut cached = self.vector_index.write()
@@ -160,6 +189,63 @@ impl Database {
                 .cloned()
                 .ok_or_else(|| crate::types::Error::Other(anyhow::anyhow!("Index cache is None but not dirty - this should not happen")))
         }
+    }
+    
+    /// Get the path to the index cache directory
+    fn get_index_cache_dir(&self) -> PathBuf {
+        // Store index cache in a directory next to database: db.sqlite -> db.sqlite.idx/
+        let mut cache_dir = self.db_path.clone();
+        cache_dir.set_extension("sqlite.idx");
+        cache_dir
+    }
+    
+    /// Calculate a hash of all spans to detect changes
+    fn calculate_spans_hash(&self) -> Result<String> {
+        let spans = self.get_all_spans()?;
+        let mut hasher = Sha256::new();
+        for span in &spans {
+            hasher.update(span.id.as_bytes());
+            if let Some(emb) = &span.embedding {
+                hasher.update(&emb.len().to_le_bytes());
+            }
+        }
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+    
+    /// Load index from disk if valid
+    fn load_index_from_disk(&self, cache_dir: &Path) -> Result<Arc<VectorIndex>> {
+        // Try to load using VectorIndex::load_from_disk
+        match VectorIndex::load_from_disk(cache_dir) {
+            Ok(Some(index)) => {
+                // Verify hash matches current spans (double-check)
+                let current_hash = self.calculate_spans_hash()?;
+                let cached_spans = index.spans();
+                let mut hasher = Sha256::new();
+                for span in cached_spans {
+                    hasher.update(span.id.as_bytes());
+                    if let Some(emb) = &span.embedding {
+                        hasher.update(&emb.len().to_le_bytes());
+                    }
+                }
+                let cached_hash = format!("{:x}", hasher.finalize());
+                
+                if cached_hash == current_hash {
+                    Ok(Arc::new(index))
+                } else {
+                    Err(crate::types::Error::NotFound("Index cache is stale".to_string()))
+                }
+            }
+            Ok(None) => Err(crate::types::Error::NotFound("Index cache not found".to_string())),
+            Err(e) => Err(e),
+        }
+    }
+    
+    /// Save index to disk for persistence
+    fn save_index_to_disk(&self, cache_dir: &Path, index: &VectorIndex) -> Result<()> {
+        // Use VectorIndex::save_to_disk which saves both HNSW dump and spans
+        index.save_to_disk(cache_dir)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to save index to disk: {}", e)))?;
+        Ok(())
     }
 
     /// Get all spans from the database
@@ -320,6 +406,8 @@ impl Database {
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
         *cached = None;
         self.index_dirty.store(true, Ordering::Release);
+        // Delete index cache directory
+        let _ = std::fs::remove_dir_all(self.get_index_cache_dir());
         Ok(())
     }
 }

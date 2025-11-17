@@ -42,8 +42,8 @@ pub async fn compile(
     let start_time = std::time::Instant::now();
     let mut last_checkpoint = start_time;
 
-    // Step 1: Embed query
-    let query_embedding = embedding::embed_text(query, api_key).await?;
+    // Step 1: Embed query (uses local embeddings by default, no API key needed)
+    let query_embedding = embedding::embed_text(query, None, api_key).await?;
     log::debug!("Embed query: {}ms", last_checkpoint.elapsed().as_millis());
     last_checkpoint = std::time::Instant::now();
 
@@ -79,13 +79,16 @@ pub async fn compile(
     log::debug!("Token packing: {}ms", last_checkpoint.elapsed().as_millis());
     last_checkpoint = std::time::Instant::now();
 
-    // Step 7: Sort deterministically
-    let sorted_spans = deterministic_sort(selected_spans);
+    // Step 7: Sort deterministically (but keep scores for citations)
+    let sorted_scored_spans = deterministic_sort_with_scores(selected_spans);
     log::debug!("Deterministic sort: {}ms", last_checkpoint.elapsed().as_millis());
     last_checkpoint = std::time::Instant::now();
 
-    // Step 8: Build context and citations
-    let (context_text, citations) = build_context(&sorted_spans, db)?;
+    // Step 8: Build context and citations (preserve scores)
+    let (context_text, citations) = build_context(&sorted_scored_spans, db)?;
+    
+    // Extract spans for WorkingSet (without scores)
+    let sorted_spans: Vec<Span> = sorted_scored_spans.iter().map(|s| s.span.clone()).collect();
     log::debug!("Build context: {}ms", last_checkpoint.elapsed().as_millis());
     last_checkpoint = std::time::Instant::now();
 
@@ -211,12 +214,10 @@ fn hybrid_fusion(
 ///
 /// Diversified list of scored spans
 ///
-/// TODO: Implement MMR algorithm
-/// This is a key business logic decision that affects result quality.
-/// Consider the trade-offs:
-/// - Higher lambda = more relevant but potentially redundant
-/// - Lower lambda = more diverse but potentially less relevant
-/// - How to handle spans without embeddings?
+/// Implements Maximal Marginal Relevance (MMR) algorithm to balance
+/// relevance and diversity. Higher lambda = more relevant but potentially
+/// redundant. Lower lambda = more diverse but potentially less relevant.
+/// Spans without embeddings are handled by treating similarity as 0.0.
 fn apply_mmr(
     candidates: Vec<ScoredSpan>,
     _query_embedding: &[f32],
@@ -280,7 +281,14 @@ fn apply_mmr(
     selected
 }
 
-/// Pack spans into token budget using greedy selection
+/// Pack spans into token budget using optimized greedy selection
+///
+/// Uses a two-pass greedy algorithm:
+/// 1. First pass: Select high-value spans (score/token ratio) that fit
+/// 2. Second pass: Fill remaining budget with smaller spans
+///
+/// This balances relevance (via scores) with token utilization efficiency.
+/// A full knapsack DP would be O(n*budget) which is too slow for large datasets.
 ///
 /// # Arguments
 ///
@@ -289,47 +297,64 @@ fn apply_mmr(
 ///
 /// # Returns
 ///
-/// Selected spans that fit within budget
-///
-/// TODO: Implement token budget packing
-/// Consider:
-/// - Should we always take the highest scored spans?
-/// - Or try to maximize token utilization with a knapsack approach?
-/// - How to handle very large spans that might waste budget?
+/// Selected spans that fit within budget, optimized for score/token ratio
 fn pack_token_budget(candidates: Vec<ScoredSpan>, budget: usize) -> Vec<ScoredSpan> {
+    if candidates.is_empty() || budget == 0 {
+        return vec![];
+    }
+
     let mut selected = Vec::new();
     let mut total_tokens = 0;
+
+    // Calculate value density (score per token) for each candidate
+    // This helps prioritize high-value spans that use budget efficiently
+    let mut candidates_with_density: Vec<(ScoredSpan, f32)> = candidates
+        .into_iter()
+        .map(|c| {
+            let density = if c.span.token_count > 0 {
+                c.score / c.span.token_count as f32
+            } else {
+                // Spans with 0 tokens get infinite density (shouldn't happen, but handle it)
+                f32::INFINITY
+            };
+            (c, density)
+        })
+        .collect();
+
+    // Sort by density (highest first), then by score as tiebreaker
+    candidates_with_density.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal))
+    });
 
     // First pass: greedy selection of high-value spans
     let mut remaining = Vec::new();
 
-    for candidate in candidates {
+    for (candidate, _density) in candidates_with_density {
         let span_tokens = candidate.span.token_count;
 
-        // Skip spans that are too large and would waste budget
-        // (e.g., a span that's >40% of budget might leave too much unused)
-        let remaining_budget = budget - total_tokens;
-        let waste_ratio = if remaining_budget > 0 {
-            (span_tokens as f32 - remaining_budget as f32) / budget as f32
-        } else {
-            1.0
-        };
+        // Skip spans that are too large (would waste too much budget)
+        // Reject spans >50% of total budget to avoid poor utilization
+        if span_tokens > budget / 2 {
+            continue;
+        }
 
         if total_tokens + span_tokens <= budget {
             total_tokens += span_tokens;
             selected.push(candidate);
-        } else if waste_ratio < 0.4 && span_tokens < budget {
+        } else {
             // Might fit later, keep for second pass
             remaining.push(candidate);
         }
     }
 
     // Second pass: try to fill remaining budget with smaller spans
-    // This maximizes token utilization
+    // Sort by size (smallest first) to maximize utilization
     let remaining_budget = budget.saturating_sub(total_tokens);
 
-    if remaining_budget > 0 {
-        // Sort remaining by size (smallest first) to fill gaps
+    if remaining_budget > 0 && !remaining.is_empty() {
+        // Sort by token count (ascending) to fill gaps efficiently
         remaining.sort_by_key(|s| s.span.token_count);
 
         for candidate in remaining {
@@ -343,7 +368,31 @@ fn pack_token_budget(candidates: Vec<ScoredSpan>, budget: usize) -> Vec<ScoredSp
     selected
 }
 
-/// Sort spans deterministically
+/// Deterministically sort spans (preserving scores)
+///
+/// Critical for ensuring same query → same result every time.
+/// Sorts by (artifact_id, start_line) to create canonical ordering.
+///
+/// # Arguments
+///
+/// * `spans` - Scored spans to sort
+///
+/// # Returns
+///
+/// Deterministically sorted scored spans
+fn deterministic_sort_with_scores(mut spans: Vec<ScoredSpan>) -> Vec<ScoredSpan> {
+    // Sort by (artifact_id, start_line) for deterministic ordering
+    spans.sort_by(|a, b| {
+        a.span
+            .artifact_id
+            .cmp(&b.span.artifact_id)
+            .then_with(|| a.span.start_line.cmp(&b.span.start_line))
+    });
+
+    spans
+}
+
+/// Sort spans deterministically (legacy, returns spans without scores)
 ///
 /// Critical for ensuring same query → same result every time.
 /// Sorts by (artifact_id, start_line) to create canonical ordering.
@@ -367,21 +416,23 @@ fn deterministic_sort(mut spans: Vec<ScoredSpan>) -> Vec<Span> {
     spans.into_iter().map(|s| s.span).collect()
 }
 
-/// Build context text and citations from spans
+/// Build context text and citations from scored spans
 ///
 /// # Arguments
 ///
-/// * `spans` - Selected spans
+/// * `scored_spans` - Selected spans with scores
 /// * `db` - Database handle
 ///
 /// # Returns
 ///
 /// (context_text, citations)
-fn build_context(spans: &[Span], db: &Database) -> Result<(String, Vec<Citation>)> {
+fn build_context(scored_spans: &[ScoredSpan], db: &Database) -> Result<(String, Vec<Citation>)> {
     let mut context_parts = Vec::new();
     let mut citations = Vec::new();
 
-    for (idx, span) in spans.iter().enumerate() {
+    for (idx, scored_span) in scored_spans.iter().enumerate() {
+        let span = &scored_span.span;
+        
         // Get artifact path for citation
         let artifact = db.get_artifact(&span.artifact_id)?;
         let artifact_path = artifact
@@ -400,14 +451,14 @@ fn build_context(spans: &[Span], db: &Database) -> Result<(String, Vec<Citation>
 
         context_parts.push(chunk);
 
-        // Create citation
+        // Create citation (preserve score from ScoredSpan)
         citations.push(Citation {
             span_id: span.id.clone(),
             artifact_id: span.artifact_id.clone(),
             artifact_path,
             start_line: span.start_line,
             end_line: span.end_line,
-            score: 0.0, // TODO: Preserve score from search
+            score: scored_span.score, // Preserve score from search
         });
     }
 

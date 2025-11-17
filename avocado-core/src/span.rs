@@ -105,8 +105,9 @@ pub fn extract_spans(content: &str, artifact_id: &str) -> Result<Vec<Span>> {
 ///
 /// `true` if a span should be created at this point
 ///
-/// TODO: Implement smart span boundary detection
-/// Consider:
+/// Smart span boundary detection
+///
+/// Detects natural boundaries for creating semantic spans:
 /// - Paragraph boundaries (empty lines)
 /// - Code block boundaries (``` markers)
 /// - Section headers (# markdown, == rst, etc.)
@@ -153,6 +154,19 @@ fn should_create_span(
     if num_lines >= 30 {
         // Look for natural boundaries
         if line.trim().is_empty() || is_header || is_code_fence {
+            return true;
+        }
+        
+        // Detect function/class definitions (common in code)
+        let trimmed = line.trim();
+        let is_definition = trimmed.starts_with("def ") 
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("function ")
+            || trimmed.starts_with("pub fn ")
+            || trimmed.starts_with("fn ")
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("let ");
+        if is_definition && num_lines >= 25 {
             return true;
         }
 

@@ -8,6 +8,7 @@ The SDK has been completely refactored to be **framework-agnostic**, moving all 
 
 ### New Features
 
+- ✅ **Local LLM Support**: Optional TinyLlama integration for natural language answers
 - ✅ **Server Lifecycle Management**: Auto-start, health checks, daemon mode
 - ✅ **Background File Monitoring**: Auto-detect and re-ingest changed files
 - ✅ **Smart Auto-Ingest**: Project type detection (Python/Node/Rust/Go/etc.)
@@ -48,6 +49,27 @@ for (const citation of result.citations) {
   console.log(`  - ${citation.artifactPath}:${citation.startLine}-${citation.endLine}`);
 }
 ```
+
+### Ask Questions (v2.0 - New!)
+
+Get natural language answers using TinyLlama:
+
+```typescript
+import { AvocadoDB } from 'avocadodb';
+
+const db = new AvocadoDB('http://localhost:8765');
+
+// Ask a question - uses TinyLlama if available
+const answer = await db.ask('How does authentication work?');
+console.log(answer);
+
+// Options:
+// - llm: 'auto' (default) - Try TinyLlama, fallback to context
+// - llm: 'local' - Require TinyLlama (throws error if not available)
+// - llm: 'none' - Just return context (same as compile())
+```
+
+**Note**: Requires Python SDK with LLM support installed: `pip install avocadodb[llm]`
 
 ### With Auto-Management
 

@@ -5,6 +5,7 @@
  *
  * Features:
  * - HTTP client for compile/ingest/stats operations
+ * - Local LLM support (TinyLlama) for natural language answers (v2.0)
  * - Server lifecycle management (auto-start, daemon mode)
  * - Background file monitoring and re-ingestion
  * - Smart auto-ingest with project type detection
@@ -19,6 +20,10 @@
  * const db = new AvocadoDB('http://localhost:8765');
  * const result = await db.compile('How does authentication work?');
  * console.log(result.text);
+ *
+ * // Ask questions with TinyLlama (v2.0)
+ * const answer = await db.ask('How does authentication work?');
+ * console.log(answer);
  *
  * // With auto-management
  * import { getManager, AutoIngest } from 'avocadodb';
