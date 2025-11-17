@@ -4,14 +4,20 @@
 //! SQLite is sufficient for Phase 1 (can handle 10K+ documents easily).
 
 use crate::types::{Artifact, Result, Span};
+use crate::index::VectorIndex;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// Database connection wrapper with thread-safe access
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
+    // Cached vector index to avoid rebuilding on every compile request
+    vector_index: Arc<RwLock<Option<Arc<VectorIndex>>>>,
+    // Flag to track if index needs rebuilding (invalidated on ingest)
+    index_dirty: Arc<AtomicBool>,
 }
 
 impl Database {
@@ -48,6 +54,8 @@ impl Database {
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            vector_index: Arc::new(RwLock::new(None)),
+            index_dirty: Arc::new(AtomicBool::new(true)),
         })
     }
 
@@ -75,6 +83,8 @@ impl Database {
                 artifact.created_at.to_rfc3339(),
             ],
         )?;
+        // Invalidate cached index since we added a new artifact
+        self.index_dirty.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -113,7 +123,43 @@ impl Database {
         }
 
         tx.commit()?;
+        // Invalidate cached index since we added new spans
+        self.index_dirty.store(true, Ordering::Release);
         Ok(())
+    }
+
+    /// Get or build the cached vector index
+    ///
+    /// The index is cached and only rebuilt when data changes (on ingest).
+    /// This avoids loading all spans and rebuilding the index on every compile request.
+    ///
+    /// # Returns
+    ///
+    /// A reference-counted vector index
+    pub fn get_vector_index(&self) -> Result<Arc<VectorIndex>> {
+        // Check if index needs rebuilding
+        if self.index_dirty.load(Ordering::Acquire) {
+            // Rebuild index
+            let spans = self.get_all_spans()?;
+            let index = Arc::new(VectorIndex::build(spans));
+            
+            // Update cache
+            let mut cached = self.vector_index.write()
+                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
+            *cached = Some(index.clone());
+            
+            // Mark as clean
+            self.index_dirty.store(false, Ordering::Release);
+            
+            Ok(index)
+        } else {
+            // Return cached index
+            let cached = self.vector_index.read()
+                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
+            cached.as_ref()
+                .cloned()
+                .ok_or_else(|| crate::types::Error::Other(anyhow::anyhow!("Index cache is None but not dirty - this should not happen")))
+        }
     }
 
     /// Get all spans from the database
@@ -269,6 +315,11 @@ impl Database {
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
         conn.execute("DELETE FROM spans", [])?;
         conn.execute("DELETE FROM artifacts", [])?;
+        // Clear cached index
+        let mut cached = self.vector_index.write()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
+        *cached = None;
+        self.index_dirty.store(true, Ordering::Release);
         Ok(())
     }
 }

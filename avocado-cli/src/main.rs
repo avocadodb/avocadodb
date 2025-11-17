@@ -3,7 +3,7 @@
 //! Simple CLI for interacting with AvocadoDB locally.
 
 use anyhow::Result;
-use avocado_core::{compiler, db::Database, embedding, index::VectorIndex, span, Artifact, CompilerConfig};
+use avocado_core::{compiler, db::Database, embedding, span, Artifact, CompilerConfig};
 use clap::{Parser, Subcommand};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
@@ -239,14 +239,12 @@ async fn main() -> Result<()> {
                 None
             };
 
-            // Load all spans and build index
-            let spans = db.get_all_spans()?;
-
+            // Get cached vector index (rebuilds only if data changed)
             if let Some(sp) = &spinner {
-                sp.set_message(format!("Building vector index ({} spans)...", spans.len()));
+                sp.set_message("Loading vector index...");
             }
 
-            let index = VectorIndex::build(spans);
+            let index = db.get_vector_index()?;
 
             // Compile context
             let config = CompilerConfig {
@@ -258,7 +256,7 @@ async fn main() -> Result<()> {
                 sp.set_message("Compiling context (embedding query + hybrid search)...");
             }
 
-            let working_set = compiler::compile(&query, config, &db, &index, None).await?;
+            let working_set = compiler::compile(&query, config, &db, index.as_ref(), None).await?;
 
             if let Some(sp) = spinner {
                 sp.finish_and_clear();

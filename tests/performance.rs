@@ -2,7 +2,7 @@
 //!
 //! Ensure compilation meets speed requirements.
 
-use avocado_core::{compiler, db::Database, index::VectorIndex, span, Artifact, CompilerConfig};
+use avocado_core::{compiler, db::Database, span, Artifact, CompilerConfig};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -47,10 +47,8 @@ async fn test_compilation_performance() {
         db.insert_spans(&spans).unwrap();
     }
 
-    let all_spans = db.get_all_spans().unwrap();
-    println!("Database ready: {} spans", all_spans.len());
-
-    let index = VectorIndex::build(all_spans);
+    let index = db.get_vector_index().unwrap();
+    println!("Database ready: {} spans", index.len());
 
     // Test compilation performance
     let query = "complex technical query with multiple keywords about authentication and security";
@@ -60,7 +58,7 @@ async fn test_compilation_performance() {
     };
 
     let start = std::time::Instant::now();
-    let result = compiler::compile(query, config, &db, &index, None)
+    let result = compiler::compile(query, config, &db, index.as_ref(), None)
         .await
         .unwrap();
     let duration = start.elapsed();

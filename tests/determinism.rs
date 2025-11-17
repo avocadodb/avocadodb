@@ -2,7 +2,7 @@
 //!
 //! The most critical test: same query → same result, every time.
 
-use avocado_core::{compiler, db::Database, index::VectorIndex, span, Artifact, CompilerConfig};
+use avocado_core::{compiler, db::Database, span, Artifact, CompilerConfig};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -43,9 +43,8 @@ async fn test_deterministic_compilation() {
 
     db.insert_spans(&spans).unwrap();
 
-    // Build index
-    let all_spans = db.get_all_spans().unwrap();
-    let index = VectorIndex::build(all_spans);
+    // Get cached index
+    let index = db.get_vector_index().unwrap();
 
     // Run compilation 100 times
     let query = "How does authentication work?";
@@ -53,7 +52,7 @@ async fn test_deterministic_compilation() {
 
     let mut hashes = Vec::new();
     for _ in 0..100 {
-        let result = compiler::compile(query, config.clone(), &db, &index, None)
+        let result = compiler::compile(query, config.clone(), &db, index.as_ref(), None)
             .await
             .unwrap();
 
@@ -116,11 +115,10 @@ async fn test_determinism_with_different_instances() {
 
         db.insert_spans(&spans).unwrap();
 
-        // Compile
-        let all_spans = db.get_all_spans().unwrap();
-        let index = VectorIndex::build(all_spans);
+        // Get cached index
+        let index = db.get_vector_index().unwrap();
 
-        let result = compiler::compile(query, config.clone(), &db, &index, None)
+        let result = compiler::compile(query, config.clone(), &db, index.as_ref(), None)
             .await
             .unwrap();
 

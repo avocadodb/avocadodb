@@ -2,7 +2,7 @@
 //!
 //! Simple REST API for AvocadoDB.
 
-use avocado_core::{compiler, db::Database, embedding, index::VectorIndex, span, Artifact, CompilerConfig};
+use avocado_core::{compiler, db::Database, embedding, span, Artifact, CompilerConfig};
 use axum::{
     extract::{Json, State},
     http::StatusCode,
@@ -131,13 +131,11 @@ async fn compile_handler(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CompileRequest>,
 ) -> Result<Json<CompileResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Load spans and build index
-    let spans = state
+    // Get cached vector index (rebuilds only if data changed)
+    let index = state
         .db
-        .get_all_spans()
+        .get_vector_index()
         .map_err(|e| internal_error(e.to_string()))?;
-
-    let index = VectorIndex::build(spans);
 
     // Use provided config or default
     let config = req.config.unwrap_or_else(|| CompilerConfig {
@@ -145,8 +143,8 @@ async fn compile_handler(
         ..Default::default()
     });
 
-    // Compile context
-    let working_set = compiler::compile(&req.query, config, &state.db, &index, None)
+    // Compile context (index is Arc, so we can pass reference
+    let working_set = compiler::compile(&req.query, config, &state.db, index.as_ref(), None)
         .await
         .map_err(|e| internal_error(e.to_string()))?;
 

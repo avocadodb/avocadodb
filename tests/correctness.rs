@@ -2,7 +2,7 @@
 //!
 //! Verify that compilation results are correct and meet all constraints.
 
-use avocado_core::{compiler, db::Database, index::VectorIndex, span, Artifact, CompilerConfig};
+use avocado_core::{compiler, db::Database, span, Artifact, CompilerConfig};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -10,11 +10,10 @@ use uuid::Uuid;
 #[ignore] // Requires OPENAI_API_KEY
 async fn test_no_duplicate_spans() {
     let db = setup_test_db().await;
-    let spans = db.get_all_spans().unwrap();
-    let index = VectorIndex::build(spans);
+    let index = db.get_vector_index().unwrap();
 
     let config = CompilerConfig::default();
-    let result = compiler::compile("test query", config, &db, &index, None)
+    let result = compiler::compile("test query", config, &db, index.as_ref(), None)
         .await
         .unwrap();
 
@@ -35,8 +34,7 @@ async fn test_no_duplicate_spans() {
 #[ignore] // Requires OPENAI_API_KEY
 async fn test_token_budget_respected() {
     let db = setup_test_db().await;
-    let spans = db.get_all_spans().unwrap();
-    let index = VectorIndex::build(spans);
+    let index = db.get_vector_index().unwrap();
 
     let budget = 1000;
     let config = CompilerConfig {
@@ -44,7 +42,7 @@ async fn test_token_budget_respected() {
         ..Default::default()
     };
 
-    let result = compiler::compile("test query", config, &db, &index, None)
+    let result = compiler::compile("test query", config, &db, index.as_ref(), None)
         .await
         .unwrap();
 
@@ -62,11 +60,10 @@ async fn test_token_budget_respected() {
 #[ignore] // Requires OPENAI_API_KEY
 async fn test_citations_valid() {
     let db = setup_test_db().await;
-    let spans = db.get_all_spans().unwrap();
-    let index = VectorIndex::build(spans);
+    let index = db.get_vector_index().unwrap();
 
     let config = CompilerConfig::default();
-    let result = compiler::compile("authentication", config, &db, &index, None)
+    let result = compiler::compile("authentication", config, &db, index.as_ref(), None)
         .await
         .unwrap();
 
