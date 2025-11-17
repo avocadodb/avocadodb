@@ -1,13 +1,25 @@
 {
   "name": "avocadodb",
-  "version": "1.0.0",
-  "description": "Deterministic context database for AI agents - TypeScript SDK",
+  "version": "2.0.0",
+  "description": "Framework-agnostic SDK for AvocadoDB - the deterministic context database",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
     "README.md"
   ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./integrations/langchain": {
+      "import": "./dist/integrations/langchain.js",
+      "require": "./dist/integrations/langchain.js",
+      "types": "./dist/integrations/langchain.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
@@ -21,26 +33,43 @@
     "ai",
     "llm",
     "deterministic",
-    "avocadodb"
+    "avocadodb",
+    "langchain",
+    "framework-agnostic"
   ],
   "author": "AvocadoDB Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/avocadodb/avocadodb"
+    "url": "https://github.com/servesys-labs/avacadodb"
   },
   "bugs": {
-    "url": "https://github.com/avocadodb/avocadodb/issues"
+    "url": "https://github.com/servesys-labs/avacadodb/issues"
   },
-  "homepage": "https://github.com/avocadodb/avocadodb#readme",
+  "homepage": "https://github.com/servesys-labs/avacadodb#readme",
   "dependencies": {
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "glob": "^10.0.0"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=0.1.0",
+    "zod": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@langchain/core": "^0.1.0",
     "@types/node": "^20.0.0",
     "@types/node-fetch": "^2.6.2",
     "typescript": "^5.0.0",
-    "ts-node": "^10.9.0"
+    "ts-node": "^10.9.0",
+    "zod": "^3.0.0"
   },
   "engines": {
     "node": ">=14.0.0"

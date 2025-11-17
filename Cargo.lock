@@ -196,6 +196,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "avocado-tests"
+version = "0.1.0"
+dependencies = [
+ "avocado-core",
+ "chrono",
+ "sha2",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "axum"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

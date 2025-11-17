@@ -3,6 +3,7 @@
 //! The most critical test: same query → same result, every time.
 
 use avocado_core::{compiler, db::Database, span, Artifact, CompilerConfig};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -14,7 +15,7 @@ async fn test_deterministic_compilation() {
     // Create test artifact
     let artifact_id = Uuid::new_v4().to_string();
     let content = create_test_document();
-    let content_hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
+    let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
 
     let artifact = Artifact {
         id: artifact_id.clone(),
@@ -82,19 +83,21 @@ async fn test_determinism_with_different_instances() {
 
     let mut hashes = Vec::new();
 
-    for i in 0..3 {
+    // Use deterministic artifact_id based on content hash for true determinism
+    let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+    let artifact_id = format!("{:x}", Sha256::digest(format!("artifact_{}", content_hash).as_bytes()));
+
+    for _i in 0..3 {
         // Create fresh database
         let db = Database::new(":memory:").unwrap();
 
-        // Ingest same content
-        let artifact_id = Uuid::new_v4().to_string();
-        let content_hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
-
+        // Ingest same content with same artifact_id and path for determinism
+        // (path is included in citations, so must be the same for deterministic results)
         let artifact = Artifact {
             id: artifact_id.clone(),
-            path: format!("test_{}.md", i),
+            path: "test.md".to_string(), // Same path for all iterations
             content: content.clone(),
-            content_hash,
+            content_hash: content_hash.clone(),
             metadata: None,
             created_at: chrono::Utc::now(),
         };

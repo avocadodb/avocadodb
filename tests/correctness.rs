@@ -3,6 +3,7 @@
 //! Verify that compilation results are correct and meet all constraints.
 
 use avocado_core::{compiler, db::Database, span, Artifact, CompilerConfig};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -190,7 +191,7 @@ Tokens are issued for authenticated sessions.
 "#
     .to_string();
 
-    let content_hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
+    let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
 
     let artifact = Artifact {
         id: artifact_id.clone(),

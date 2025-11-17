@@ -1,0 +1,24 @@
+[package]
+name = "avocado-tests"
+version.workspace = true
+edition.workspace = true
+
+[[test]]
+name = "correctness"
+path = "correctness.rs"
+
+[[test]]
+name = "determinism"
+path = "determinism.rs"
+
+[[test]]
+name = "performance"
+path = "performance.rs"
+
+[dependencies]
+avocado-core = { path = "../avocado-core" }
+tokio = { workspace = true, features = ["full"] }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+

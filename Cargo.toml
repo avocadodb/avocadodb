@@ -1,5 +1,5 @@
 [workspace]
-members = ["avocado-core", "avocado-cli", "avocado-server"]
+members = ["avocado-core", "avocado-cli", "avocado-server", "tests"]
 resolver = "2"
 
 [workspace.package]
