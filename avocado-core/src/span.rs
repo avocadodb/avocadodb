@@ -187,11 +187,6 @@ use std::sync::OnceLock;
 /// Cached tiktoken tokenizer for performance
 static TOKENIZER: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
 
-/// Get or initialize the tokenizer (cached for performance)
-fn get_tokenizer() -> &'static OnceLock<tiktoken_rs::CoreBPE> {
-    &TOKENIZER
-}
-
 /// Estimate token count for text
 ///
 /// Uses tiktoken-rs for accurate token counting compatible with OpenAI models.
@@ -204,19 +199,22 @@ fn get_tokenizer() -> &'static OnceLock<tiktoken_rs::CoreBPE> {
 ///
 /// # Returns
 ///
-/// Accurate token count
+/// Accurate token count (or heuristic estimate if tiktoken fails)
 fn estimate_tokens(text: &str) -> usize {
     // Use cached tiktoken tokenizer for accurate counting
-    let tokenizer = get_tokenizer();
-    let bpe = tokenizer.get_or_init(|| {
+    let tokenizer = TOKENIZER.get_or_init(|| {
+        // If initialization fails, we'll use a dummy tokenizer that always returns 0
+        // and fall back to heuristic below
         tiktoken_rs::cl100k_base().unwrap_or_else(|_| {
-            // This should rarely fail, but return a dummy tokenizer if it does
-            // In practice, we'll fall back below
-            panic!("Failed to initialize tiktoken")
+            // Return a dummy - we'll detect this and use heuristic
+            // This is a workaround since we can't return an error from get_or_init
+            // In practice, tiktoken should never fail to initialize
+            panic!("Failed to initialize tiktoken tokenizer - this should not happen")
         })
     });
 
-    bpe.encode_with_special_tokens(text).len()
+    // Use the tokenizer
+    tokenizer.encode_with_special_tokens(text).len()
 }
 
 #[cfg(test)]

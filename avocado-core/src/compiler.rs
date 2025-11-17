@@ -422,14 +422,16 @@ use std::sync::OnceLock;
 static TOKENIZER: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
 
 /// Count tokens in text using cached tiktoken-rs tokenizer
+///
+/// Note: If tiktoken fails to initialize, this will panic. In practice,
+/// tiktoken should never fail to initialize unless there's a system issue.
 fn count_tokens(text: &str) -> usize {
     // Use cached tiktoken tokenizer for accurate counting
-    let tokenizer = &TOKENIZER;
-    let bpe = tokenizer.get_or_init(|| {
-        tiktoken_rs::cl100k_base().expect("Failed to initialize tiktoken")
+    let tokenizer = TOKENIZER.get_or_init(|| {
+        tiktoken_rs::cl100k_base().expect("Failed to initialize tiktoken tokenizer")
     });
 
-    bpe.encode_with_special_tokens(text).len()
+    tokenizer.encode_with_special_tokens(text).len()
 }
 
 #[cfg(test)]

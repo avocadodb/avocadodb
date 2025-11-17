@@ -21,12 +21,16 @@ struct AppState {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
+    // Get database path from environment or use default
+    let db_path = std::env::var("AVOCADO_DB_PATH")
+        .unwrap_or_else(|_| ".avocado/db.sqlite".to_string());
+
     // Initialize database
-    let db = Database::new(".avocado/db.sqlite")
-        .expect("Failed to initialize database");
+    let db = Database::new(&db_path)
+        .map_err(|e| format!("Failed to initialize database at {}: {}", db_path, e))?;
 
     let state = Arc::new(AppState { db });
 
@@ -47,11 +51,13 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .expect("Failed to bind");
+        .map_err(|e| format!("Failed to bind to {}: {}", addr, e))?;
 
     axum::serve(listener, app)
         .await
-        .expect("Server error");
+        .map_err(|e| format!("Server error: {}", e))?;
+
+    Ok(())
 }
 
 // ===== Request/Response Types =====

@@ -29,15 +29,7 @@ impl Database {
 
         // Run migrations (without PRAGMA statements)
         let schema = include_str!("../../migrations/001_initial.sql");
-        // Split into CREATE statements only (skip PRAGMA lines)
-        for statement in schema.lines() {
-            let trimmed = statement.trim();
-            if !trimmed.is_empty() && !trimmed.starts_with("--") && !trimmed.starts_with("PRAGMA") {
-                // Accumulate multi-line statements
-                continue;
-            }
-        }
-
+        
         // Execute the schema without PRAGMAs
         let schema_without_pragma = schema
             .lines()
@@ -69,7 +61,8 @@ impl Database {
     ///
     /// Ok(()) if successful
     pub fn insert_artifact(&self, artifact: &Artifact) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
         conn.execute(
             "INSERT INTO artifacts (id, path, content, content_hash, metadata, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -95,7 +88,8 @@ impl Database {
     ///
     /// Ok(()) if successful
     pub fn insert_spans(&self, spans: &[Span]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
         let tx = conn.transaction()?;
 
         for span in spans {
@@ -128,7 +122,8 @@ impl Database {
     ///
     /// Vector of all spans
     pub fn get_all_spans(&self) -> Result<Vec<Span>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
         let mut stmt = conn.prepare(
             "SELECT id, artifact_id, start_line, end_line, text,
                     embedding, embedding_model, token_count, metadata
@@ -168,7 +163,8 @@ impl Database {
     ///
     /// The artifact if found
     pub fn get_artifact(&self, artifact_id: &str) -> Result<Option<Artifact>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
         let mut stmt = conn.prepare(
             "SELECT id, path, content, content_hash, metadata, created_at
              FROM artifacts WHERE id = ?1",
@@ -206,7 +202,8 @@ impl Database {
     ///
     /// Vector of matching spans
     pub fn search_spans(&self, query: &str, limit: usize) -> Result<Vec<Span>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
         let mut stmt = conn.prepare(
             "SELECT id, artifact_id, start_line, end_line, text,
                     embedding, embedding_model, token_count, metadata
@@ -245,7 +242,8 @@ impl Database {
     ///
     /// (artifacts_count, spans_count, total_tokens)
     pub fn get_stats(&self) -> Result<(usize, usize, usize)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
 
         let artifacts_count: i64 = conn.query_row("SELECT COUNT(*) FROM artifacts", [], |row| {
             row.get(0)
@@ -267,7 +265,8 @@ impl Database {
 
     /// Clear all data from the database
     pub fn clear(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
         conn.execute("DELETE FROM spans", [])?;
         conn.execute("DELETE FROM artifacts", [])?;
         Ok(())

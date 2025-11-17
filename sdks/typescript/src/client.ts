@@ -208,7 +208,7 @@ export class AvocadoDB {
     const data = await response.json();
     return {
       artifactId: data.artifact_id,
-      spanCount: data.span_count,
+      spanCount: data.spans_created,
     };
   }
 
