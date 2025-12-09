@@ -5,8 +5,8 @@ Provides TinyLlama helper for generating natural language answers from context.
 This module is optional - AvocadoDB works fine without it.
 """
 
-from typing import Optional, Union
-import warnings
+from typing import Optional, Any
+from importlib.util import find_spec
 
 
 class TinyLlamaHelper:
@@ -24,22 +24,20 @@ class TinyLlamaHelper:
         """
         self.device = device
         self.model_name = model_name
-        self._model = None
-        self._tokenizer = None
+        self._model: Any = None
+        self._tokenizer: Any = None
     
     def _load_model(self):
         """Lazy-load the model (only when needed)."""
         if self._model is not None:
             return
         
-        try:
-            from transformers import pipeline
-            import torch
-        except ImportError:
+        if find_spec("transformers") is None or find_spec("torch") is None:
             raise ImportError(
                 "transformers and torch are required for LLM support. "
                 "Install with: pip install avocadodb[llm]"
             )
+        from transformers import pipeline  # type: ignore[import-not-found]
         
         try:
             self._model = pipeline(
@@ -110,12 +108,7 @@ Answer:"""
     
     def is_available(self) -> bool:
         """Check if TinyLlama is available (dependencies installed)."""
-        try:
-            from transformers import pipeline
-            import torch
-            return True
-        except ImportError:
-            return False
+        return find_spec("transformers") is not None and find_spec("torch") is not None
 
 
 # Global singleton instance for LLM (loaded once, reused across calls)

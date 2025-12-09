@@ -1,0 +1,170 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for AvocadoDB
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! We love hearing ideas from the community.
+
+  - type: checkboxes
+    id: pre-check
+    attributes:
+      label: Pre-flight Checklist
+      description: Please ensure you've completed these steps before submitting
+      options:
+        - label: I have searched existing issues and discussions to ensure this hasn't been suggested before
+          required: true
+        - label: I have checked the roadmap to see if this is already planned
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What use case does it address?
+      placeholder: |
+        As a [type of user], I want to [do something] so that [achieve goal].
+
+        Currently, I have to [workaround/limitation]...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your ideal solution to the problem
+      placeholder: |
+        I propose adding [feature] that would allow users to...
+
+        This could work by...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or features?
+      placeholder: |
+        - Alternative 1: Use existing feature X, but this requires...
+        - Alternative 2: Third-party tool Y, but it doesn't integrate well...
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component would this feature affect?
+      options:
+        - Core (avocado-core)
+        - CLI (avocado-cli)
+        - Server (avocado-server)
+        - Python bindings
+        - TypeScript bindings
+        - Documentation
+        - API
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example Usage
+      description: Show how you would use this feature (code example or API usage)
+      render: rust
+      placeholder: |
+        // Example of how this feature might be used
+        use avocado_core::Database;
+
+        let db = Database::new("vectors.db")?;
+        db.new_proposed_feature()?;
+        // ...
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Critical (blocking my use case)
+        - High (significant impact on usability)
+        - Medium (would be nice to have)
+        - Low (minor improvement)
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case Details
+      description: Describe your specific use case in more detail
+      placeholder: |
+        I'm building an application that does X with Y amount of data.
+        This feature would help by...
+
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: What benefits would this feature provide to the broader community?
+      placeholder: |
+        - Improves performance for large datasets
+        - Makes AvocadoDB more accessible to beginners
+        - Enables new use cases like...
+
+  - type: checkboxes
+    id: breaking-change
+    attributes:
+      label: Breaking Changes
+      description: Would this require breaking changes to the API?
+      options:
+        - label: This feature would require breaking changes to existing APIs
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Ideas
+      description: (Optional) Do you have ideas about how this could be implemented?
+      placeholder: |
+        This could potentially be implemented by...
+
+        Dependencies might include...
+
+        Challenges to consider...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or references
+      placeholder: |
+        - Similar feature in other databases: [link]
+        - Research paper: [link]
+        - Community discussion: [link]
+
+  - type: checkboxes
+    id: willing-to-implement
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to submit a PR to implement this feature
+        - label: I'm willing to help with testing and feedback
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Expected Impact
+      description: How many users do you think would benefit from this?
+      options:
+        - Most users (core functionality)
+        - Many users (common use case)
+        - Some users (specific use case)
+        - Few users (niche use case)
+    validations:
+      required: true

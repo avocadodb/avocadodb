@@ -4,6 +4,14 @@
 
 Fix your RAG in 5 minutes - same query, same context, every time.
 
+[![Build Status](https://img.shields.io/github/actions/workflow/status/avocadodb/avocadodb/ci.yml?branch=master)](https://github.com/avocadodb/avocadodb/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Crates.io](https://img.shields.io/crates/v/avocado-core.svg)](https://crates.io/crates/avocado-core)
+[![Docker Hub](https://img.shields.io/docker/pulls/avocadodb/avocadodb)](https://hub.docker.com/r/avocadodb/avocadodb)
+[![GitHub stars](https://img.shields.io/github/stars/avocadodb/avocadodb?style=social)](https://github.com/avocadodb/avocadodb)
+[![GitHub issues](https://img.shields.io/github/issues/avocadodb/avocadodb)](https://github.com/avocadodb/avocadodb/issues)
+[![Coverage](https://img.shields.io/codecov/c/github/avocadodb/avocadodb)](https://codecov.io/gh/avocadodb/avocadodb)
+
 ![Embedding](https://img.shields.io/badge/Embedding-Pure%20Rust%20%E2%9A%A1-green) ![Speed](https://img.shields.io/badge/Speed-6x%20Faster-brightgreen) ![Cost](https://img.shields.io/badge/Cost-%240-blue)
 
 ## What is AvocadoDB?
@@ -52,7 +60,28 @@ See [EMBEDDING_PERFORMANCE.md](docs/EMBEDDING_PERFORMANCE.md) for detailed bench
 
 ## Quick Start
 
-### Installation
+### Docker (Recommended)
+
+The fastest way to get started:
+
+```bash
+# Run with Docker
+docker run -d \
+  -p 8765:8765 \
+  -v avocado-data:/data \
+  --name avocadodb \
+  avocadodb/avocadodb:latest
+
+# Or use Docker Compose
+docker-compose up -d
+
+# Test the server
+curl http://localhost:8765/health
+```
+
+See [Docker Guide](docs/DOCKER.md) for complete documentation.
+
+### Installation from Source
 
 ```bash
 # Install Rust
@@ -84,7 +113,7 @@ cargo build --release
 # export AVOCADODB_EMBEDDING_PROVIDER=openai
 ```
 
-### CLI Usage
+### CLI Usage (Daemon by default)
 
 ```bash
 # Initialize database
@@ -98,12 +127,22 @@ cargo build --release
 ./target/release/avocado ingest ./docs --recursive
 # Output: Ingested 42 files → 387 spans
 
-# Compile context
+# Compile context (uses daemon at http://localhost:8765 by default)
 ./target/release/avocado compile "How does authentication work?" --budget 8000
+# Force local mode (uses .avocado/db.sqlite in current project)
+./target/release/avocado compile "How does authentication work?" --local --budget 8000
 
 # Run performance benchmarks
 ./target/release/avocado benchmark
 # Shows real performance on your hardware
+```
+
+#### GPU-backed server (Modal) quickstart
+```bash
+# Start the daemon with remote GPU embeddings (Modal)
+avocado serve --gpu --embed-url https://<your-modal-endpoint>/embed
+# or CPU/local (default)
+avocado serve
 ```
 
 **Example Output:**
@@ -171,17 +210,78 @@ const result = await db.compile('my query', { budget: 8000 });
 console.log(result.text);  // Deterministic every time
 ```
 
-### HTTP Server
+### HTTP Server (Multi-project daemon)
 
 ```bash
-# Start server
+# Start server (binds to 127.0.0.1 by default)
 ./target/release/avocado-server
 
 # Use the API
-curl -X POST http://localhost:8080/compile \
+curl -X POST http://localhost:8765/compile \
   -H "Content-Type: application/json" \
-  -d '{"query": "authentication", "token_budget": 8000}'
+  -d '{"query": "authentication", "token_budget": 8000, "project": "'"$PWD"'"}'
 ```
+
+## Docker & Kubernetes Deployment
+
+AvocadoDB is production-ready with full Docker and Kubernetes support.
+
+### Docker
+
+```bash
+# Quick start with Docker
+docker run -d -p 8765:8765 -v avocado-data:/data avocadodb/avocadodb:latest
+
+# Or use Docker Compose
+docker-compose up -d
+```
+
+**Features:**
+- Multi-stage build for minimal image size (~80-100MB)
+- Multi-architecture support (linux/amd64, linux/arm64)
+- Non-root user for security
+- Health checks built-in
+- Configurable via environment variables
+
+See [Docker Guide](docs/DOCKER.md) for complete documentation.
+
+### Kubernetes
+
+```bash
+# Deploy to Kubernetes
+kubectl apply -k k8s/
+
+# Verify deployment
+kubectl get pods -l app=avocadodb
+```
+
+**Includes:**
+- Production-ready Deployment manifests
+- Horizontal scaling support
+- Persistent storage configuration
+- Ingress with TLS/HTTPS
+- ConfigMaps and Secrets management
+- Resource limits and health checks
+
+See [Kubernetes Guide](k8s/README.md) for complete documentation.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8765` | HTTP server port |
+| `BIND_ADDR` | `127.0.0.1` | Bind address (set `0.0.0.0` to expose publicly) |
+| `RUST_LOG` | `info` | Log level |
+| `AVOCADODB_EMBEDDING_MODEL` | `minilm` | Embedding model (minilm, nomic, bgelarge) |
+| `AVOCADODB_EMBEDDING_PROVIDER` | `local` | Provider (local or openai) |
+| `OPENAI_API_KEY` | - | OpenAI API key (if using OpenAI) |
+| `AVOCADODB_ROOT` | unset | Optional project root. When set, all `project` paths must be under this directory. Requests outside are rejected. |
+| `API_TOKEN` | unset | If set, requires header `X-Avocado-Token` to be present and equal for all routes (except `/health`, `/api-docs/*`). |
+| `MAX_BODY_BYTES` | `2097152` (2MB) | Request body size limit to protect against large payloads. |
+
+Security note:
+- Do not expose the server publicly without protection. If you must, set `BIND_ADDR=0.0.0.0` and front it with auth.
+- For local safety, clients always send an explicit `project` (their current working directory), and the server normalizes paths and can restrict to `AVOCADODB_ROOT`.
 
 ## How It Works
 
@@ -198,6 +298,53 @@ Query → Embed → [Semantic Search + Lexical Search] → Hybrid Fusion
 2. **Hybrid Retrieval**: Combines semantic (vector) and lexical (keyword) search
 3. **Deterministic Ordering**: Results sorted by `(artifact_id, start_line)` for reproducibility
 4. **Greedy Token Packing**: Maximizes token budget utilization without duplicates
+
+## Session Management
+
+**NEW in v2.0**: Multi-turn conversation tracking with context compilation
+
+AvocadoDB now supports session management, enabling AI agents to maintain conversation history and context across multiple interactions.
+
+### Quick Example
+
+```python
+from avocado import AvocadoDB
+
+db = AvocadoDB(mode="http")
+
+# Create a session
+session = db.create_session(user_id="alice", title="Project Q&A")
+
+# Multi-turn conversation
+result = session.compile("What is AvocadoDB?", budget=8000)
+session.add_message("assistant", "AvocadoDB is a deterministic context database...")
+
+result2 = session.compile("How does the compiler work?")
+session.add_message("assistant", "The compiler uses hybrid search...")
+
+# Get conversation history
+history = session.get_history()
+
+# Replay for debugging
+replay = session.replay()
+```
+
+### Features
+
+- **Multi-turn conversations**: Track user queries and agent responses
+- **Context compilation**: Automatically compile context for each query
+- **Conversation history**: Retrieve formatted history with token limiting
+- **Session replay**: Debug agent behavior by replaying entire sessions
+- **Persistence**: Sessions stored in SQLite with full ACID guarantees
+
+### Available in
+
+- ✅ **Python SDK**: Full session support with `Session` class
+- ✅ **TypeScript SDK**: Complete session management API
+- ✅ **CLI**: Session commands for interactive use
+- ✅ **HTTP API**: RESTful endpoints for all session operations
+
+See [SESSION_MANAGEMENT.md](docs/SESSION_MANAGEMENT.md) for complete documentation.
 
 ## Why Determinism Matters
 
@@ -515,7 +662,7 @@ cargo run --bin avocado-server
 - [ ] Framework integrations (LangChain, LlamaIndex)
 
 ### Phase 3 - Agent Memory
-- [ ] Session management
+- [x] Session management
 - [ ] Working set versioning
 - [ ] Collaborative features
 - [ ] Memory systems

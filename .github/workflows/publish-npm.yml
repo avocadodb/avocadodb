@@ -1,0 +1,174 @@
+name: Publish TypeScript SDK to npm
+
+on:
+  push:
+    tags:
+      - 'npm-v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 2.0.0)'
+        required: true
+        type: string
+      test_registry:
+        description: 'Publish to test registry (dry-run)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-and-publish:
+    name: Build and Publish to npm
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write  # For provenance
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            TAG="npm-v${VERSION}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#npm-v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update package version
+        working-directory: sdks/typescript
+        run: |
+          npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+          cat package.json | grep '"version"'
+
+      - name: Install dependencies
+        working-directory: sdks/typescript
+        run: npm ci
+
+      - name: Build package
+        working-directory: sdks/typescript
+        run: npm run build
+
+      - name: Run tests (if available)
+        working-directory: sdks/typescript
+        run: |
+          if npm run | grep -q "test"; then
+            npm test
+          else
+            echo "No tests defined, skipping..."
+          fi
+        continue-on-error: false
+
+      - name: Verify build artifacts
+        working-directory: sdks/typescript
+        run: |
+          ls -lh dist/
+          echo "Checking package contents..."
+          npm pack --dry-run
+
+      - name: Publish to npm (dry-run)
+        if: github.event.inputs.test_registry == 'true'
+        working-directory: sdks/typescript
+        run: npm publish --dry-run --access public
+
+      - name: Publish to npm
+        if: github.event.inputs.test_registry != 'true'
+        working-directory: sdks/typescript
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: avocadodb (npm) v${{ steps.version.outputs.version }}
+          body: |
+            # avocadodb v${{ steps.version.outputs.version }}
+
+            Framework-agnostic TypeScript/JavaScript SDK for AvocadoDB.
+
+            ## Installation
+
+            ```bash
+            npm install avocadodb@${{ steps.version.outputs.version }}
+            ```
+
+            ```bash
+            yarn add avocadodb@${{ steps.version.outputs.version }}
+            ```
+
+            ```bash
+            pnpm add avocadodb@${{ steps.version.outputs.version }}
+            ```
+
+            ## What's Included
+
+            - Full TypeScript support with type definitions
+            - Framework-agnostic design (works with any JS framework)
+            - LangChain integration support
+            - Session management
+            - Deterministic context retrieval
+
+            ## Quick Start
+
+            ```typescript
+            import { AvocadoDBClient } from 'avocadodb';
+
+            const client = new AvocadoDBClient({
+              baseUrl: 'http://localhost:8765'
+            });
+
+            // Start using AvocadoDB!
+            ```
+
+            ## Documentation
+
+            - [TypeScript SDK Guide](https://docs.avocadodb.com/sdks/typescript)
+            - [API Reference](https://docs.avocadodb.com/api/typescript)
+            - [Examples](https://github.com/avocadodb/avocadodb/tree/master/sdks/typescript/examples)
+
+            ---
+
+            Generated with [Claude Code](https://claude.com/claude-code)
+
+            Co-Authored-By: Claude <noreply@anthropic.com>
+          files: sdks/typescript/avocadodb-${{ steps.version.outputs.version }}.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create package archive for release
+        if: github.event_name == 'push'
+        working-directory: sdks/typescript
+        run: npm pack
+
+      - name: Summary
+        run: |
+          echo "## Package Published Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** avocadodb" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.test_registry }}" = "true" ]; then
+            echo "**Mode:** Dry Run" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Registry:** npmjs.org" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Install with: \`npm install avocadodb@${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "View on npm: https://www.npmjs.com/package/avocadodb/v/${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          fi

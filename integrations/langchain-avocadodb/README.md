@@ -18,48 +18,80 @@ pip install langchain-avocadodb
 
 ## Quick Start
 
-### 1. Start AvocadoDB Server
-
-```bash
-# Install AvocadoDB
-curl -fsSL https://raw.githubusercontent.com/avocadodb/avocadodb/main/install.sh | sh
-
-# Start the server
-avocado-server
-
-# Ingest your codebase
-avocado ingest ./your-project --recursive
-```
-
-### 2. Use with LangChain
+### 5-Second Example
 
 ```python
 from langchain_avocadodb import AvocadoDBRetriever
 from langchain.chains import RetrievalQA
 from langchain_openai import ChatOpenAI
 
-# Initialize retriever
+retriever = AvocadoDBRetriever(url="http://localhost:8765")
+chain = RetrievalQA.from_chain_type(ChatOpenAI(), retriever=retriever)
+result = chain.invoke({"query": "How does authentication work?"})
+```
+
+### Full Setup
+
+#### 1. Install
+
+```bash
+pip install langchain-avocadodb langchain langchain-openai
+```
+
+#### 2. Start AvocadoDB Server
+
+```bash
+# Install AvocadoDB (if not already installed)
+curl -fsSL https://raw.githubusercontent.com/avocadodb/avocadodb/main/install.sh | sh
+
+# Start the daemon server
+avocado-server
+
+# Ingest your codebase
+avocado ingest . --recursive
+```
+
+#### 3. Set OpenAI API Key
+
+```bash
+export OPENAI_API_KEY="your-key-here"
+```
+
+#### 4. Use with LangChain
+
+```python
+from langchain_avocadodb import AvocadoDBRetriever
+from langchain.chains import RetrievalQA
+from langchain_openai import ChatOpenAI
+
+# Initialize retriever with configuration
 retriever = AvocadoDBRetriever(
     url="http://localhost:8765",
-    budget=8000,  # Token budget
-    include_citations=True
+    budget=8000,  # Token budget for context
+    include_citations=True,  # Include source citations
+    enable_mmr=True,  # Enable diversity
 )
 
 # Create QA chain
 qa_chain = RetrievalQA.from_chain_type(
-    llm=ChatOpenAI(),
+    llm=ChatOpenAI(temperature=0),
     retriever=retriever,
     return_source_documents=True
 )
 
 # Ask questions with deterministic context
-result = qa_chain.invoke("How does authentication work?")
+result = qa_chain.invoke({"query": "How does authentication work?"})
 print(result["answer"])
 
-# Citations included in metadata
+# View citations with line numbers
 for doc in result["source_documents"]:
-    print(f"Source: {doc.metadata['source']}:{doc.metadata['start_line']}-{doc.metadata['end_line']}")
+    metadata = doc.metadata
+    print(f"📄 {metadata['source']}")
+    print(f"   Lines: {metadata['start_line']}-{metadata['end_line']}")
+    print(f"   Score: {metadata['score']:.2f}")
 ```
+
+**That's it!** Same query will always return same context - fully deterministic and reproducible.
 
 ## Advanced Usage
 
@@ -215,9 +247,11 @@ avocado stats
 pip install langchain-avocadodb langchain langchain-openai
 ```
 
-## API Reference
+## Documentation
 
-See the [full API documentation](https://docs.avocadodb.com/integrations/langchain) for detailed information on all classes and methods.
+- **[Integration Guide](../../docs/LANGCHAIN_INTEGRATION.md)** - Comprehensive guide with advanced patterns
+- **[Examples](./examples/)** - 4 complete examples with detailed comments
+- **[API Reference](https://docs.avocadodb.com/api)** - Full API documentation
 
 ## Contributing
 

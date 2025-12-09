@@ -11,16 +11,19 @@ export interface Span {
   endLine: number;
   text: string;
   tokenCount: number;
-  score: number;
+  score?: number;
 }
 
 /**
  * A citation referencing a span in a document
  */
 export interface Citation {
+  artifactId?: string;
   artifactPath: string;
   startLine: number;
   endLine: number;
+  spanId?: string;
+  score?: number;
 }
 
 /**
@@ -46,24 +49,44 @@ export class WorkingSet {
   readonly compilationTimeMs: number;
 
   constructor(data: any) {
-    this.text = data.text;
-    this.spans = data.spans.map((s: any) => ({
+    // Some servers wrap the working set as { working_set: {...} }
+    const ws = data.working_set ?? data;
+
+    this.text = ws.text;
+
+    // Build artifactId -> artifactPath map from citations
+    const pathByArtifact: Record<string, string> = {};
+    const citationsRaw = (ws.citations ?? []) as any[];
+    for (const c of citationsRaw) {
+      if (c.artifact_id && c.artifact_path) {
+        pathByArtifact[c.artifact_id] = c.artifact_path;
+      }
+    }
+
+    // Map citations
+    this.citations = citationsRaw.map((c: any) => ({
+      artifactId: c.artifact_id,
+      artifactPath: c.artifact_path,
+      startLine: c.start_line,
+      endLine: c.end_line,
+      spanId: c.span_id,
+      score: c.score,
+    }));
+
+    // Map spans and enrich artifactPath from citations where missing
+    this.spans = (ws.spans ?? []).map((s: any) => ({
       artifactId: s.artifact_id,
-      artifactPath: s.artifact_path,
+      artifactPath: s.artifact_path ?? pathByArtifact[s.artifact_id] ?? '',
       startLine: s.start_line,
       endLine: s.end_line,
       text: s.text,
       tokenCount: s.token_count,
-      score: s.score,
+      score: s.score, // may be undefined; that’s OK
     }));
-    this.citations = data.citations.map((c: any) => ({
-      artifactPath: c.artifact_path,
-      startLine: c.start_line,
-      endLine: c.end_line,
-    }));
-    this.tokensUsed = data.tokens_used;
-    this.query = data.query;
-    this.compilationTimeMs = data.compilation_time_ms;
+
+    this.tokensUsed = ws.tokens_used;
+    this.query = ws.query;
+    this.compilationTimeMs = ws.compilation_time_ms;
   }
 
   /**
@@ -137,13 +160,15 @@ export interface IngestResult {
  */
 export class AvocadoDB {
   private readonly baseUrl: string;
+  private readonly projectPath: string;
 
   /**
    * Create a new AvocadoDB client
-   * @param url - Base URL of the AvocadoDB server (default: http://localhost:8080)
+   * @param url - Base URL of the AvocadoDB server (default: http://localhost:8765)
    */
-  constructor(url: string = 'http://localhost:8080') {
+  constructor(url: string = 'http://localhost:8765') {
     this.baseUrl = url.replace(/\/$/, ''); // Remove trailing slash
+    this.projectPath = process.cwd();
   }
 
   /**
@@ -165,6 +190,7 @@ export class AvocadoDB {
         lexical_weight: options.lexicalWeight ?? 0.3,
         mmr_lambda: options.mmrLambda ?? 0.5,
         enable_mmr: options.enableMmr ?? true,
+        project: this.projectPath,
       }),
     });
 
@@ -198,6 +224,7 @@ export class AvocadoDB {
       body: JSON.stringify({
         path,
         content: documentContent,
+        project: this.projectPath,
       }),
     });
 
@@ -224,11 +251,12 @@ export class AvocadoDB {
     }
 
     const data = await response.json();
-    return {
-      artifacts: data.artifacts,
-      spans: data.spans,
-      tokens: data.tokens,
-    };
+    // Server returns { artifacts_count, spans_count, total_tokens }
+    // Fall back to { artifacts, spans, tokens } if present
+    const artifacts = data.artifacts_count ?? data.artifacts ?? 0;
+    const spans = data.spans_count ?? data.spans ?? 0;
+    const tokens = data.total_tokens ?? data.tokens ?? 0;
+    return { artifacts, spans, tokens };
   }
 
   /**

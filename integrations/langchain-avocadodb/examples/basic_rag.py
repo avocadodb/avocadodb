@@ -1,10 +1,20 @@
 """
-Basic RAG example with LangChain and AvocadoDB.
+Basic RAG (Retrieval-Augmented Generation) example with LangChain and AvocadoDB.
 
 This example demonstrates:
-1. Setting up AvocadoDBRetriever
-2. Using it with RetrievalQA chain
-3. Getting deterministic, citation-backed answers
+1. Setting up AvocadoDBRetriever with custom configuration
+2. Using it with RetrievalQA chain for question answering
+3. Getting deterministic, citation-backed answers with source tracking
+4. Different retrieval strategies (MMR, filtering, span combination)
+
+Prerequisites:
+- AvocadoDB server running (avocado-server)
+- Documents ingested (avocado ingest . --recursive)
+- OpenAI API key set (export OPENAI_API_KEY=...)
+
+The key benefit of AvocadoDB is determinism: the same query will always
+return the exact same context, making your RAG applications reproducible
+and testable.
 """
 
 from langchain_avocadodb import AvocadoDBRetriever
@@ -49,7 +59,7 @@ def main():
     for question in questions:
         print(f"\n{'='*60}")
         print(f"Question: {question}")
-        print('='*60)
+        print("=" * 60)
 
         # Get answer with sources
         result = qa_chain.invoke({"query": question})
@@ -60,7 +70,9 @@ def main():
         print("\nSources:")
         for doc in result["source_documents"]:
             metadata = doc.metadata
-            print(f"  - {metadata['source']}:{metadata['start_line']}-{metadata['end_line']}")
+            print(
+                f"  - {metadata['source']}:{metadata['start_line']}-{metadata['end_line']}"
+            )
             if "score" in metadata:
                 print(f"    Score: {metadata['score']:.3f}")
             if "citations" in metadata:
@@ -69,7 +81,9 @@ def main():
 
         # Show deterministic hash
         if result["source_documents"]:
-            hash_value = result["source_documents"][0].metadata.get("deterministic_hash")
+            hash_value = result["source_documents"][0].metadata.get(
+                "deterministic_hash"
+            )
             print(f"\nDeterministic hash: {hash_value}")
             print("(Same query will always return same context)")
 
@@ -78,9 +92,9 @@ def example_with_mmr():
     """
     Example using MMR (Maximal Marginal Relevance) for diverse results.
     """
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("MMR Example - Getting diverse results")
-    print("="*60)
+    print("=" * 60)
 
     # Configure for diversity
     retriever = AvocadoDBRetriever(
@@ -99,18 +113,15 @@ def example_with_mmr():
     )
 
     # Query that benefits from diverse sources
-    result = qa_chain.invoke({
-        "query": "What are all the different components of the system?"
-    })
+    result = qa_chain.invoke(
+        {"query": "What are all the different components of the system?"}
+    )
 
     print(f"\nAnswer: {result['answer']}")
     print(f"\nDiverse sources found: {len(result['source_documents'])}")
 
     # Show unique files
-    unique_files = set(
-        doc.metadata["source"]
-        for doc in result["source_documents"]
-    )
+    unique_files = set(doc.metadata["source"] for doc in result["source_documents"])
     print(f"Unique files: {', '.join(unique_files)}")
 
 
@@ -118,9 +129,9 @@ def example_with_filtering():
     """
     Example with score filtering for high-quality results.
     """
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Filtered Example - Only high-quality matches")
-    print("="*60)
+    print("=" * 60)
 
     # Configure with minimum score threshold
     retriever = AvocadoDBRetriever(
@@ -145,9 +156,9 @@ def example_combined_spans():
     """
     Example combining adjacent spans for better context.
     """
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Combined Spans Example - Better context windows")
-    print("="*60)
+    print("=" * 60)
 
     # Configure to combine adjacent spans
     retriever = AvocadoDBRetriever(

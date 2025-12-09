@@ -58,7 +58,7 @@ class AvocadoDBVectorStore(VectorStore):
         mmr_lambda: float = 0.5,
         enable_mmr: bool = True,
         embedding: Optional[Embeddings] = None,  # Ignored, for compatibility
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize AvocadoDB VectorStore.
@@ -89,7 +89,7 @@ class AvocadoDBVectorStore(VectorStore):
             lexical_weight=lexical_weight,
             mmr_lambda=mmr_lambda,
             enable_mmr=enable_mmr,
-            **kwargs
+            **kwargs,
         )
 
         # Store config for cloning
@@ -101,7 +101,7 @@ class AvocadoDBVectorStore(VectorStore):
             "lexical_weight": lexical_weight,
             "mmr_lambda": mmr_lambda,
             "enable_mmr": enable_mmr,
-            **kwargs
+            **kwargs,
         }
 
     @property
@@ -114,10 +114,7 @@ class AvocadoDBVectorStore(VectorStore):
         return None
 
     def add_texts(
-        self,
-        texts: List[str],
-        metadatas: Optional[List[dict]] = None,
-        **kwargs
+        self, texts: List[str], metadatas: Optional[List[dict]] = None, **kwargs
     ) -> List[str]:
         """
         Add texts to the database.
@@ -136,11 +133,7 @@ class AvocadoDBVectorStore(VectorStore):
         )
         return []
 
-    def add_documents(
-        self,
-        documents: List[Document],
-        **kwargs
-    ) -> List[str]:
+    def add_documents(self, documents: List[Document], **kwargs) -> List[str]:
         """
         Add documents to the database.
 
@@ -150,12 +143,7 @@ class AvocadoDBVectorStore(VectorStore):
         metadatas = [doc.metadata for doc in documents]
         return self.add_texts(texts, metadatas, **kwargs)
 
-    def similarity_search(
-        self,
-        query: str,
-        k: int = 4,
-        **kwargs
-    ) -> List[Document]:
+    def similarity_search(self, query: str, k: int = 4, **kwargs) -> List[Document]:
         """
         Search for similar documents.
 
@@ -183,10 +171,7 @@ class AvocadoDBVectorStore(VectorStore):
             self._retriever.budget = original_budget
 
     async def asimilarity_search(
-        self,
-        query: str,
-        k: int = 4,
-        **kwargs
+        self, query: str, k: int = 4, **kwargs
     ) -> List[Document]:
         """
         Async search for similar documents.
@@ -205,10 +190,7 @@ class AvocadoDBVectorStore(VectorStore):
             self._retriever.budget = original_budget
 
     def similarity_search_with_score(
-        self,
-        query: str,
-        k: int = 4,
-        **kwargs
+        self, query: str, k: int = 4, **kwargs
     ) -> List[Tuple[Document, float]]:
         """
         Search with relevance scores.
@@ -227,10 +209,7 @@ class AvocadoDBVectorStore(VectorStore):
         return results
 
     def similarity_search_by_vector(
-        self,
-        embedding: List[float],
-        k: int = 4,
-        **kwargs
+        self, embedding: List[float], k: int = 4, **kwargs
     ) -> List[Document]:
         """
         Search by embedding vector.
@@ -249,7 +228,7 @@ class AvocadoDBVectorStore(VectorStore):
         k: int = 4,
         fetch_k: int = 20,
         lambda_mult: float = 0.5,
-        **kwargs
+        **kwargs,
     ) -> List[Document]:
         """
         Search with Maximal Marginal Relevance.
@@ -277,7 +256,7 @@ class AvocadoDBVectorStore(VectorStore):
         self,
         search_type: str = "similarity",
         search_kwargs: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> AvocadoDBRetriever:
         """
         Return the underlying AvocadoDBRetriever.
@@ -320,7 +299,7 @@ class AvocadoDBVectorStore(VectorStore):
         texts: List[str],
         embedding: Optional[Embeddings] = None,
         metadatas: Optional[List[dict]] = None,
-        **kwargs
+        **kwargs,
     ) -> "AvocadoDBVectorStore":
         """
         Create VectorStore from texts.
@@ -342,10 +321,7 @@ class AvocadoDBVectorStore(VectorStore):
 
     @classmethod
     def from_documents(
-        cls,
-        documents: List[Document],
-        embedding: Optional[Embeddings] = None,
-        **kwargs
+        cls, documents: List[Document], embedding: Optional[Embeddings] = None, **kwargs
     ) -> "AvocadoDBVectorStore":
         """
         Create VectorStore from documents.
@@ -356,11 +332,7 @@ class AvocadoDBVectorStore(VectorStore):
         metadatas = [doc.metadata for doc in documents]
         return cls.from_texts(texts, embedding, metadatas, **kwargs)
 
-    def delete(
-        self,
-        ids: Optional[List[str]] = None,
-        **kwargs
-    ) -> Optional[bool]:
+    def delete(self, ids: Optional[List[str]] = None, **kwargs) -> Optional[bool]:
         """
         Delete documents by ID.
 

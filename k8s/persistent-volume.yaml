@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: avocadodb-pvc
+  labels:
+    app: avocadodb
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  # Optional: specify storage class
+  # storageClassName: fast-ssd
+
+---
+# Optional: Static PersistentVolume (for on-premise deployments)
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: avocadodb-pv
+#   labels:
+#     app: avocadodb
+# spec:
+#   capacity:
+#     storage: 10Gi
+#   volumeMode: Filesystem
+#   accessModes:
+#   - ReadWriteOnce
+#   persistentVolumeReclaimPolicy: Retain
+#   storageClassName: local-storage
+#   local:
+#     path: /mnt/data/avocadodb
+#   nodeAffinity:
+#     required:
+#       nodeSelectorTerms:
+#       - matchExpressions:
+#         - key: kubernetes.io/hostname
+#           operator: In
+#           values:
+#           - node1.example.com
+
+---
+# Optional: For multi-replica with shared storage (NFS/EFS)
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: avocadodb-shared-pvc
+#   labels:
+#     app: avocadodb
+# spec:
+#   accessModes:
+#   - ReadWriteMany
+#   resources:
+#     requests:
+#       storage: 50Gi
+#   storageClassName: nfs-storage

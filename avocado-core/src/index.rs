@@ -8,6 +8,10 @@ use crate::embedding;
 use hnsw_rs::prelude::*;
 use hnsw_rs::api::AnnT;
 use std::path::Path;
+use std::fs;
+use std::time::Instant;
+use sha2::{Digest, Sha256};
+use serde::{Serialize, Deserialize};
 
 /// In-memory vector index for fast similarity search
 /// 
@@ -44,6 +48,8 @@ impl VectorIndex {
     ///
     /// These parameters provide >95% recall@50 while being 10-100x faster than brute-force.
     pub fn build(spans: Vec<Span>) -> Self {
+        let start_time = Instant::now();
+        let total_spans = spans.len();
         if spans.is_empty() {
             // Return empty index - no HNSW needed
             return Self {
@@ -81,15 +87,26 @@ impl VectorIndex {
         );
 
         // Insert all spans with embeddings into HNSW
+        let mut inserted = 0usize;
         for (idx, span) in spans.iter().enumerate() {
             if let Some(embedding) = &span.embedding {
                 if embedding.len() == dimension {
                     // Insert into HNSW with span index as data
                     // hnsw_rs expects a tuple: (&[f32], usize) where usize is the payload
                     hnsw.insert((embedding.as_slice(), idx));
+                    inserted += 1;
                 }
             }
         }
+
+        let elapsed_ms = start_time.elapsed().as_millis();
+        log::info!(
+            "VectorIndex::build: indexed {} of {} spans (dim={}): {}ms",
+            inserted,
+            total_spans,
+            dimension,
+            elapsed_ms
+        );
 
         Self {
             hnsw: Some(hnsw),
@@ -197,8 +214,6 @@ impl VectorIndex {
     ///
     /// Ok(()) if successful
     pub fn save_to_disk(&self, cache_dir: &Path) -> Result<()> {
-        use std::fs;
-        
         // Create directory if needed
         fs::create_dir_all(cache_dir)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to create cache directory: {}", e)))?;
@@ -211,23 +226,64 @@ impl VectorIndex {
         if let Some(hnsw) = &self.hnsw {
             // HNSW file_dump creates two files: {basename}.hnsw.graph and {basename}.hnsw.data
             let basename = "index";
-            hnsw.file_dump(cache_dir, basename)
+            // Write to a temporary dir then atomically move into place
+            let tmp_dir = cache_dir.join(".tmp");
+            let _ = fs::remove_dir_all(&tmp_dir);
+            fs::create_dir_all(&tmp_dir)
+                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to create tmp dir: {}", e)))?;
+            hnsw.file_dump(&tmp_dir, basename)
                 .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to dump HNSW index: {}", e)))?;
+            // Move files into place
+            for ext in &["hnsw.graph", "hnsw.data"] {
+                let src = tmp_dir.join(format!("{}.{}", basename, ext));
+                let dst = cache_dir.join(format!("{}.{}", basename, ext));
+                fs::rename(&src, &dst)
+                    .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move {}: {}", ext, e)))?;
+            }
+            let _ = fs::remove_dir_all(&tmp_dir);
         }
         
         // Save spans metadata separately (for validation and reference)
         let spans_path = cache_dir.join("spans.bin");
+        let spans_tmp = cache_dir.join("spans.bin.tmp");
         let spans_data = bincode::serialize(&self.spans)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to serialize spans: {}", e)))?;
-        fs::write(&spans_path, spans_data)
+        fs::write(&spans_tmp, &spans_data)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to write spans cache: {}", e)))?;
+        fs::rename(&spans_tmp, &spans_path)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move spans cache: {}", e)))?;
         
         // Save dimension for validation
         let dim_path = cache_dir.join("dimension.bin");
+        let dim_tmp = cache_dir.join("dimension.bin.tmp");
         let dim_data = bincode::serialize(&self.dimension)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to serialize dimension: {}", e)))?;
-        fs::write(&dim_path, dim_data)
+        fs::write(&dim_tmp, &dim_data)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to write dimension cache: {}", e)))?;
+        fs::rename(&dim_tmp, &dim_path)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move dimension cache: {}", e)))?;
+
+        // Save metadata with checksum and version
+        let checksum = {
+            let mut hasher = Sha256::new();
+            hasher.update(&spans_data);
+            format!("{:x}", hasher.finalize())
+        };
+        let meta = IndexMeta {
+            version: 1,
+            backend: "hnsw_rs".to_string(),
+            span_count: self.spans.len(),
+            dimension: self.dimension,
+            spans_checksum: checksum,
+        };
+        let meta_json = serde_json::to_vec(&meta)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to serialize index meta: {}", e)))?;
+        let meta_path = cache_dir.join("index.meta.json");
+        let meta_tmp = cache_dir.join("index.meta.json.tmp");
+        fs::write(&meta_tmp, &meta_json)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to write index meta: {}", e)))?;
+        fs::rename(&meta_tmp, &meta_path)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move index meta: {}", e)))?;
         
         Ok(())
     }
@@ -251,15 +307,23 @@ impl VectorIndex {
     /// Some(VectorIndex) if loaded successfully, None otherwise
     pub fn load_from_disk(cache_dir: &Path) -> Result<Option<Self>> {
         use std::fs;
-        
         // Check if cache files exist
         let spans_path = cache_dir.join("spans.bin");
         let dim_path = cache_dir.join("dimension.bin");
+        let meta_path = cache_dir.join("index.meta.json");
         
-        if !spans_path.exists() || !dim_path.exists() {
+        if !spans_path.exists() || !dim_path.exists() || !meta_path.exists() {
             return Ok(None);
         }
-        
+        // Read and validate metadata
+        let meta_json = fs::read(&meta_path)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to read index meta: {}", e)))?;
+        let meta: IndexMeta = serde_json::from_slice(&meta_json)
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to parse index meta: {}", e)))?;
+        if meta.version != 1 {
+            return Err(crate::types::Error::Other(anyhow::anyhow!("Unsupported index version: {}", meta.version)));
+        }
+
         // Load dimension
         let dim_data = fs::read(&dim_path)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to read dimension cache: {}", e)))?;
@@ -269,6 +333,15 @@ impl VectorIndex {
         // Load spans
         let spans_data = fs::read(&spans_path)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to read spans cache: {}", e)))?;
+        // Validate checksum
+        let mut hasher = Sha256::new();
+        hasher.update(&spans_data);
+        let actual_checksum = format!("{:x}", hasher.finalize());
+        if actual_checksum != meta.spans_checksum {
+            return Err(crate::types::Error::Other(anyhow::anyhow!(
+                "Index cache checksum mismatch"
+            )));
+        }
         let spans: Vec<Span> = bincode::deserialize(&spans_data)
             .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to deserialize spans: {}", e)))?;
         
@@ -302,6 +375,15 @@ impl VectorIndex {
         // serialization improvements to hnsw_rs that support owned HNSW structures.
         Ok(Some(Self::build(spans)))
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct IndexMeta {
+    version: u32,
+    backend: String,
+    span_count: usize,
+    dimension: usize,
+    spans_checksum: String,
 }
 
 /// Calculate cosine similarity between two vectors

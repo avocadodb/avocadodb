@@ -51,6 +51,18 @@ enum Commands {
         /// Search query
         query: String,
 
+        /// Backend identifier to use (e.g., bge-large-1024, openai-1536). Defaults to server active.
+        #[arg(long)]
+        backend: Option<String>,
+
+        /// AvocadoDB server URL (daemon mode). Use --local to force local DB mode.
+        #[arg(long, default_value = "http://localhost:8765")]
+        url: String,
+
+        /// Use local database instead of daemon
+        #[arg(long, default_value_t = false)]
+        local: bool,
+
         /// Token budget
         #[arg(short, long, default_value = "8000")]
         budget: usize,
@@ -59,7 +71,7 @@ enum Commands {
         #[arg(short, long)]
         json: bool,
 
-        /// Database path
+        /// Database path (local mode only)
         #[arg(short, long, default_value = ".avocado/db.sqlite")]
         db_path: PathBuf,
     },
@@ -124,6 +136,39 @@ enum Commands {
         /// Use case (e.g., "production", "legal", "code-search")
         #[arg(long)]
         use_case: Option<String>,
+    },
+
+    /// Start the AvocadoDB daemon with either GPU (remote) or CPU (local) embeddings
+    Serve {
+        /// Use GPU (remote) embeddings via an HTTP endpoint (e.g., Modal). If false, use local CPU.
+        #[arg(long, default_value_t = false)]
+        gpu: bool,
+
+        /// Remote embedding endpoint URL (required for --gpu), e.g. https://.../embed
+        #[arg(long)]
+        embed_url: Option<String>,
+
+        /// Embedding model name for remote mode
+        #[arg(long, default_value = "BAAI/bge-large-en-v1.5")]
+        model: String,
+
+        /// Embedding vector dimension for remote mode
+        #[arg(long, default_value_t = 1024)]
+        dim: usize,
+
+        /// Avocado server URL to wait on (health check)
+        #[arg(long, default_value = "http://127.0.0.1:8765")]
+        url: String,
+
+        /// Prewarm embeddings (make one small call) to reduce first-call latency
+        #[arg(long, default_value_t = true)]
+        prewarm: bool,
+    },
+
+    /// Session management commands
+    Session {
+        #[command(subcommand)]
+        command: commands::SessionCommands,
     },
 }
 
@@ -310,9 +355,12 @@ async fn main() -> Result<()> {
 
         Commands::Compile {
             query,
+            url,
+            local,
             budget,
             json,
             db_path,
+            backend,
         } => {
             if !json {
                 println!(
@@ -322,6 +370,52 @@ async fn main() -> Result<()> {
                 );
             }
 
+            // Prefer daemon mode unless --local is set
+            if !local {
+                let project = std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from("."));
+
+                let client = reqwest::Client::new();
+                let resp = client
+                    .post(format!("{}/compile", url.trim_end_matches('/')))
+                    .json(&serde_json::json!({
+                        "query": query,
+                        "token_budget": budget,
+                        "project": project.to_string_lossy(),
+                        "backend": backend,
+                    }))
+                    .send()
+                    .await?;
+
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    anyhow::bail!("Server error {}: {}", status, text);
+                }
+
+                let v: serde_json::Value = resp.json().await?;
+                let ws = v.get("working_set").cloned().unwrap_or(v);
+
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&ws)?);
+                } else {
+                    // Print context text and brief stats
+                    if let Some(text) = ws.get("text").and_then(|x| x.as_str()) {
+                        println!("{}", text);
+                        println!("\n{}", style("─".repeat(60)).dim());
+                    }
+                    let tokens = ws.get("tokens_used").and_then(|x| x.as_u64()).unwrap_or(0);
+                    let spans = ws.get("citations").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
+                    let utilization = if budget > 0 { ((tokens as f32 / budget as f32) * 100.0) as usize } else { 0 };
+                    println!("{}  {} / {} ({}%)", style("Tokens:   ").bold(), style(tokens).cyan().bold(), style(budget).dim(), utilization);
+                    println!("{}  {} spans", style("Compiled: ").bold(), style(spans).cyan().bold());
+                }
+                return Ok(());
+            }
+
+            // Local mode
             let db = Database::new(&db_path)?;
 
     // Show loading spinner
@@ -618,6 +712,93 @@ async fn main() -> Result<()> {
             use_case,
         } => {
             commands::recommend_model(corpus_size, use_case.as_deref())?;
+        }
+
+        Commands::Serve {
+            gpu,
+            embed_url,
+            model,
+            dim,
+            url,
+            prewarm,
+        } => {
+            // Build environment for the server process
+            let mut server_cmd = Command::new("avocado-server");
+            server_cmd.env("RUST_LOG", "info");
+
+            if gpu {
+                let remote = embed_url.clone().unwrap_or_default();
+                if remote.is_empty() {
+                    anyhow::bail!("--embed-url is required when using --gpu");
+                }
+                server_cmd
+                    .env("AVOCADODB_EMBEDDING_PROVIDER", "remote")
+                    .env("AVOCADODB_EMBEDDING_MODEL", &model)
+                    .env("AVOCADODB_EMBEDDING_DIM", dim.to_string())
+                    .env("AVOCADODB_EMBEDDING_URL", &remote)
+                    .env("AVOCADODB_FORBID_FALLBACKS", "1");
+            } else {
+                server_cmd
+                    .env("AVOCADODB_EMBEDDING_PROVIDER", "local")
+                    .env("AVOCADODB_FORBID_FALLBACKS", "1");
+            }
+
+            // Spawn the server process
+            let mut child = match server_cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    // Fallback to running from local target if not in PATH
+                    let mut alt = Command::new(
+                        std::env::current_exe()
+                            .ok()
+                            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                            .unwrap_or_else(|| PathBuf::from(".")) // best effort
+                            .join("avocado-server"),
+                    );
+                    alt.envs(server_cmd.get_envs().filter_map(|(k, v)| {
+                        v.map(|vv| (k.to_os_string(), vv.to_os_string()))
+                    }));
+                    alt.env("RUST_LOG", "info");
+                    alt.spawn().map_err(|_| e)?
+                }
+            };
+
+            // Wait for health
+            let client = reqwest::blocking::Client::new();
+            let start = std::time::Instant::now();
+            loop {
+                // Check if server died
+                if let Ok(Some(status)) = child.try_wait() {
+                    anyhow::bail!("avocado-server exited prematurely with status {}", status);
+                }
+                match client.get(format!("{}/health", url.trim_end_matches('/'))).send() {
+                    Ok(resp) if resp.status().is_success() => break,
+                    _ => std::thread::sleep(std::time::Duration::from_millis(300)),
+                }
+                if start.elapsed() > std::time::Duration::from_secs(30) {
+                    anyhow::bail!("timeout waiting for server health at {}/health", url);
+                }
+            }
+
+            // Optional pre-warm for GPU endpoint
+            if gpu && prewarm {
+                if let Some(remote) = embed_url {
+                    let _ = client
+                        .post(remote)
+                        .json(&serde_json::json!({"inputs": ["warmup 1","warmup 2","warmup 3"]}))
+                        .send();
+                }
+            }
+
+            println!(
+                "✓ Avocado server ready at {} ({})",
+                url,
+                if gpu { "remote embeddings (GPU)" } else { "local CPU embeddings" }
+            );
+        }
+
+        Commands::Session { command } => {
+            commands::handle_session_command(command).await?;
         }
     }
 

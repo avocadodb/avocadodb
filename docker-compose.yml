@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  avocado-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: avocadodb/avocadodb:latest
+    container_name: avocadodb-server
+    ports:
+      - "8765:8765"
+    volumes:
+      # Persist database and data
+      - avocado-data:/data
+      # Optional: Mount local directory for development
+      # - ./local-data:/data
+    environment:
+      # Server configuration
+      - PORT=8765
+      - RUST_LOG=info
+
+      # Embedding configuration
+      # By default, uses Pure Rust embeddings (fastembed) - no API key needed!
+      # Uncomment to use OpenAI embeddings instead:
+      # - AVOCADODB_EMBEDDING_PROVIDER=openai
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+      # Model selection (for fastembed)
+      # Options: minilm (384d), nomic/nomicv15 (768d), bgelarge (1024d)
+      - AVOCADODB_EMBEDDING_MODEL=minilm
+
+      # Performance tuning
+      # - MAX_PROJECTS_IN_MEMORY=10
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/bin/sh", "-c", "command -v curl >/dev/null && curl -f http://localhost:8765/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - avocado-network
+
+  # Optional: PostgreSQL for future support
+  # Uncomment when PostgreSQL backend is implemented
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: avocadodb-postgres
+  #   environment:
+  #     - POSTGRES_DB=avocadodb
+  #     - POSTGRES_USER=avocado
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - avocado-network
+  #   restart: unless-stopped
+
+networks:
+  avocado-network:
+    driver: bridge
+
+volumes:
+  avocado-data:
+    driver: local
+  # postgres-data:
+  #   driver: local

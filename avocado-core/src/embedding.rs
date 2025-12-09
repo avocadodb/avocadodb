@@ -7,8 +7,9 @@ use crate::types::{Error, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::sync::OnceLock;
 use tokio::process::Command as AsyncCommand;
+use std::sync::{Mutex, Once};
+use std::sync::OnceLock;
 use tokio::io::AsyncWriteExt;
 
 // OpenAI constants
@@ -88,6 +89,8 @@ pub enum EmbeddingProvider {
     Local,
     /// OpenAI embeddings (requires OPENAI_API_KEY)
     OpenAI,
+    /// Remote HTTP embeddings (GPU sandbox or custom service)
+    Remote,
 }
 
 impl Default for EmbeddingProvider {
@@ -110,6 +113,7 @@ impl EmbeddingProvider {
             {
                 "openai" => EmbeddingProvider::OpenAI,
                 "local" => EmbeddingProvider::Local,
+                "remote" => EmbeddingProvider::Remote,
                 _ => EmbeddingProvider::Local,
             }
         } else {
@@ -121,6 +125,13 @@ impl EmbeddingProvider {
         match self {
             EmbeddingProvider::Local => get_local_embedding_dimension(),
             EmbeddingProvider::OpenAI => OPENAI_DIMENSION,
+            EmbeddingProvider::Remote => {
+                // Allow overriding remote dimension via env; default to local dimension for compatibility
+                env::var("AVOCADODB_EMBEDDING_DIM")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or_else(get_local_embedding_dimension)
+            }
         }
     }
 
@@ -128,6 +139,8 @@ impl EmbeddingProvider {
         match self {
             EmbeddingProvider::Local => get_local_model_name(),
             EmbeddingProvider::OpenAI => OPENAI_MODEL,
+            // Remote model name is not fixed; callers can optionally set AVOCADODB_EMBEDDING_MODEL
+            EmbeddingProvider::Remote => DEFAULT_LOCAL_MODEL,
         }
     }
 }
@@ -203,6 +216,7 @@ pub async fn embed_batch(
     match provider {
         EmbeddingProvider::Local => embed_batch_local(texts).await,
         EmbeddingProvider::OpenAI => embed_batch_openai(texts, api_key).await,
+        EmbeddingProvider::Remote => embed_batch_remote(texts).await,
     }
 }
 
@@ -227,12 +241,27 @@ async fn embed_batch_local(texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
         return Ok(embeddings);
     }
     
+    // Respect hard-fail configuration to forbid non-semantic fallbacks in production
+    if matches!(std::env::var("AVOCADODB_FORBID_FALLBACKS").ok().as_deref(), Some("1" | "true" | "TRUE" | "yes" | "YES")) {
+        return Err(Error::Embedding(
+            "Local fastembed failed and fallbacks are disabled (AVOCADODB_FORBID_FALLBACKS=1)".to_string()
+        ));
+    }
+
     // Fallback to Python sentence-transformers (if available)
+    static PY_WARN_ONCE: Once = Once::new();
+    PY_WARN_ONCE.call_once(|| {
+        log::warn!("Falling back to Python sentence-transformers for embeddings. Install Rust fastembed for best performance.");
+    });
     if let Ok(embeddings) = embed_batch_local_python(texts.clone()).await {
         return Ok(embeddings);
     }
     
     // Final fallback to hash-based embeddings (works always, but not semantic)
+    static HASH_WARN_ONCE: Once = Once::new();
+    HASH_WARN_ONCE.call_once(|| {
+        log::error!("Falling back to HASH-BASED embeddings (NOT SEMANTIC). This mode is for emergencies only.");
+    });
     embed_batch_local_hash(texts).await
 }
 
@@ -244,7 +273,7 @@ async fn embed_batch_local(texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
 /// Model is downloaded from HuggingFace on first use and cached locally.
 /// fastembed handles model caching internally, so initialization is fast after first use.
 async fn embed_batch_local_rust(texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
-    use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
+    use fastembed::{TextEmbedding, InitOptions};
     use tokio::task;
     
     if texts.is_empty() {
@@ -254,20 +283,28 @@ async fn embed_batch_local_rust(texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
     // Convert &str to String for the blocking task
     let texts_owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
     
+    // Cache the TextEmbedding model instance across the process to avoid repeated initialization
+    static FASTEMBED_MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
+
     // fastembed is synchronous, so we run it in a blocking task
     // Note: fastembed handles model caching internally, so initialization is fast
     let embeddings = task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
-        // Initialize model (downloads on first use, then caches)
-        // fastembed caches the model files, so subsequent initializations are fast
-        let embedding_model = get_local_embedding_model();
-        let mut model = TextEmbedding::try_new(
-            InitOptions::new(embedding_model)
-                .with_show_download_progress(false) // Silent by default
-        )
-        .map_err(|e| Error::Embedding(format!("Failed to initialize fastembed model: {}", e)))?;
-        
+        // Initialize or reuse cached model (downloads on first use, then caches)
+        let model_mutex = FASTEMBED_MODEL.get_or_init(|| {
+            let embedding_model = get_local_embedding_model();
+            let model = TextEmbedding::try_new(
+                InitOptions::new(embedding_model)
+                    .with_show_download_progress(false)
+            )
+            .expect("Failed to initialize fastembed model");
+            Mutex::new(model)
+        });
+
         // Generate embeddings (fastembed handles normalization)
-        let embeddings = model.embed(texts_owned, None)
+        let embeddings = model_mutex
+            .lock()
+            .map_err(|_| Error::Embedding("Failed to lock fastembed model".to_string()))?
+            .embed(texts_owned, None)
             .map_err(|e| Error::Embedding(format!("Failed to generate embeddings: {}", e)))?;
         
         // Verify dimensions (get expected dimension for selected model)
@@ -518,6 +555,130 @@ async fn embed_batch_openai(
     Ok(embeddings)
 }
 
+/// Remote HTTP embedding generation
+///
+/// The remote service is configured via:
+/// - AVOCADODB_EMBEDDING_URL: required, e.g. https://your-modal-fn.modal.run/embed
+/// - AVOCADODB_EMBEDDING_API_KEY: optional, sent as Bearer token
+/// - AVOCADODB_EMBEDDING_MODEL: optional, forwarded to remote
+/// - AVOCADODB_EMBEDDING_DIM: optional, expected dimension (defaults to local dim)
+///
+/// Expected request body:
+///   { "inputs": ["text1", "text2"], "model": "BAAI/bge-small-en-v1.5" }
+///
+/// Expected response body (either of the following):
+///   { "embeddings": [[..],[..]], "dimension": 384 }
+///   [[..],[..]]
+async fn embed_batch_remote(texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+    use serde_json::json;
+
+    let url = env::var("AVOCADODB_EMBEDDING_URL")
+        .map_err(|_| Error::Embedding("AVOCADODB_EMBEDDING_URL not set for remote provider".to_string()))?;
+    if texts.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let client = Client::new();
+    let mut req = client.post(&url).header("Content-Type", "application/json");
+
+    if let Ok(api_key) = env::var("AVOCADODB_EMBEDDING_API_KEY") {
+        if !api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", api_key));
+        }
+    }
+
+    let model = env::var("AVOCADODB_EMBEDDING_MODEL").ok();
+    let body = if let Some(model_name) = model {
+        json!({ "inputs": texts, "model": model_name })
+    } else {
+        json!({ "inputs": texts })
+    };
+
+    let resp = req
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| Error::Embedding(format!("Remote request failed: {}", e)))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(Error::Embedding(format!("Remote returned error {}: {}", status, text)));
+    }
+
+    // Try to parse as { embeddings: [...], dimension?: N }
+    let expected_dim = EmbeddingProvider::Remote.dimension();
+    let text_body = resp.text().await.map_err(|e| Error::Embedding(format!("Failed reading remote body: {}", e)))?;
+
+    // First attempt: object with embeddings
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text_body) {
+        if let Some(arr) = v.get("embeddings").and_then(|x| x.as_array()) {
+            let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(arr.len());
+            for item in arr {
+                let vec_opt = item.as_array().map(|nums| {
+                    nums.iter().filter_map(|n| n.as_f64().map(|f| f as f32)).collect::<Vec<f32>>()
+                });
+                let vec = vec_opt.ok_or_else(|| Error::Embedding("Invalid embeddings array format".to_string()))?;
+                if !vec.is_empty() && vec.len() != expected_dim {
+                    // Allow remote to communicate dimension if provided
+                    if let Some(dim) = v.get("dimension").and_then(|d| d.as_u64()).map(|d| d as usize) {
+                        if vec.len() != dim {
+                            return Err(Error::Embedding(format!(
+                                "Unexpected embedding dimension: {} (expected {})",
+                                vec.len(),
+                                expected_dim
+                            )));
+                        }
+                    } else {
+                        return Err(Error::Embedding(format!(
+                            "Unexpected embedding dimension: {} (expected {})",
+                            vec.len(),
+                            expected_dim
+                        )));
+                    }
+                }
+                embeddings.push(vec);
+            }
+            if embeddings.len() != texts.len() {
+                return Err(Error::Embedding(format!(
+                    "Mismatched embedding count: got {}, expected {}",
+                    embeddings.len(),
+                    texts.len()
+                )));
+            }
+            return Ok(embeddings);
+        }
+
+        // Second attempt: top-level array
+        if let Some(arr) = v.as_array() {
+            let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(arr.len());
+            for item in arr {
+                let vec_opt = item.as_array().map(|nums| {
+                    nums.iter().filter_map(|n| n.as_f64().map(|f| f as f32)).collect::<Vec<f32>>()
+                });
+                let vec = vec_opt.ok_or_else(|| Error::Embedding("Invalid embeddings array format".to_string()))?;
+                if !vec.is_empty() && vec.len() != expected_dim {
+                    return Err(Error::Embedding(format!(
+                        "Unexpected embedding dimension: {} (expected {})",
+                        vec.len(),
+                        expected_dim
+                    )));
+                }
+                embeddings.push(vec);
+            }
+            if embeddings.len() != texts.len() {
+                return Err(Error::Embedding(format!(
+                    "Mismatched embedding count: got {}, expected {}",
+                    embeddings.len(),
+                    texts.len()
+                )));
+            }
+            return Ok(embeddings);
+        }
+    }
+
+    Err(Error::Embedding("Failed to parse remote embedding response".to_string()))
+}
 /// Get the embedding model name (based on current provider)
 pub fn embedding_model() -> &'static str {
     EmbeddingProvider::from_env().model_name()

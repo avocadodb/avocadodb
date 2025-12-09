@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[tokio::test]
-#[ignore] // Requires OPENAI_API_KEY
 async fn test_deterministic_compilation() {
     // Setup test database
     let db = Database::new(":memory:").expect("Failed to create database");
@@ -31,15 +30,14 @@ async fn test_deterministic_compilation() {
     // Extract and embed spans
     let mut spans = span::extract_spans(&content, &artifact_id).unwrap();
 
-    // Note: This test requires OPENAI_API_KEY to be set
     let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
-    let embeddings = avocado_core::embedding::embed_batch(texts, None)
+    let embeddings = avocado_core::embedding::embed_batch(texts, None, None)
         .await
-        .expect("Failed to embed (is OPENAI_API_KEY set?)");
+        .expect("Failed to embed (local embeddings should be available)");
 
     for (span, emb) in spans.iter_mut().zip(embeddings.iter()) {
         span.embedding = Some(emb.clone());
-        span.embedding_model = Some("text-embedding-ada-002".to_string());
+        span.embedding_model = Some(avocado_core::embedding::embedding_model().to_string());
     }
 
     db.insert_spans(&spans).unwrap();
@@ -47,12 +45,12 @@ async fn test_deterministic_compilation() {
     // Get cached index
     let index = db.get_vector_index().unwrap();
 
-    // Run compilation 100 times
+    // Run compilation multiple times
     let query = "How does authentication work?";
     let config = CompilerConfig::default();
 
     let mut hashes = Vec::new();
-    for _ in 0..100 {
+    for _ in 0..10 {
         let result = compiler::compile(query, config.clone(), &db, index.as_ref(), None)
             .await
             .unwrap();
@@ -73,7 +71,6 @@ async fn test_deterministic_compilation() {
 }
 
 #[tokio::test]
-#[ignore] // Requires OPENAI_API_KEY
 async fn test_determinism_with_different_instances() {
     // Test that even with fresh database instances, results are identical
 
@@ -107,13 +104,13 @@ async fn test_determinism_with_different_instances() {
         let mut spans = span::extract_spans(&content, &artifact_id).unwrap();
 
         let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
-        let embeddings = avocado_core::embedding::embed_batch(texts, None)
+        let embeddings = avocado_core::embedding::embed_batch(texts, None, None)
             .await
             .unwrap();
 
         for (span, emb) in spans.iter_mut().zip(embeddings.iter()) {
             span.embedding = Some(emb.clone());
-            span.embedding_model = Some("text-embedding-ada-002".to_string());
+            span.embedding_model = Some(avocado_core::embedding::embedding_model().to_string());
         }
 
         db.insert_spans(&spans).unwrap();

@@ -4,7 +4,7 @@ AvocadoDB reader for LlamaIndex.
 Provides deterministic document loading with line-level citations.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Iterator
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document, TextNode
 import logging
@@ -13,8 +13,7 @@ try:
     from avocado import AvocadoDB, WorkingSet
 except ImportError:
     raise ImportError(
-        "AvocadoDB Python SDK is required. "
-        "Install with: pip install avocadodb"
+        "AvocadoDB Python SDK is required. " "Install with: pip install avocadodb"
     )
 
 logger = logging.getLogger(__name__)
@@ -66,7 +65,7 @@ class AvocadoDBReader(BaseReader):
         include_scores: bool = True,
         create_nodes: bool = False,
         combine_adjacent: bool = False,
-        min_score: Optional[float] = None
+        min_score: Optional[float] = None,
     ):
         """
         Initialize AvocadoDB reader.
@@ -106,10 +105,7 @@ class AvocadoDBReader(BaseReader):
         self.min_score = min_score
 
     def load_data(
-        self,
-        query: str,
-        budget: Optional[int] = None,
-        **kwargs
+        self, query: str, budget: Optional[int] = None, **kwargs: Any
     ) -> List[Document]:
         """
         Load data for a query from AvocadoDB.
@@ -130,7 +126,7 @@ class AvocadoDBReader(BaseReader):
                 semantic_weight=kwargs.get("semantic_weight", self.semantic_weight),
                 lexical_weight=kwargs.get("lexical_weight", self.lexical_weight),
                 mmr_lambda=kwargs.get("mmr_lambda", self.mmr_lambda),
-                enable_mmr=kwargs.get("enable_mmr", self.enable_mmr)
+                enable_mmr=kwargs.get("enable_mmr", self.enable_mmr),
             )
         except Exception as e:
             logger.error(f"AvocadoDB compilation failed: {e}")
@@ -153,7 +149,8 @@ class AvocadoDBReader(BaseReader):
         # Filter by minimum score if specified
         if self.min_score is not None:
             documents = [
-                doc for doc in documents
+                doc
+                for doc in documents
                 if doc.metadata.get("score", 0) >= self.min_score
             ]
 
@@ -164,10 +161,7 @@ class AvocadoDBReader(BaseReader):
         return documents
 
     def load_data_batch(
-        self,
-        queries: List[str],
-        budget: Optional[int] = None,
-        **kwargs
+        self, queries: List[str], budget: Optional[int] = None, **kwargs: Any
     ) -> List[List[Document]]:
         """
         Load data for multiple queries.
@@ -203,20 +197,12 @@ class AvocadoDBReader(BaseReader):
             metadata = self._create_metadata(span, working_set)
 
             # Create document
-            doc = Document(
-                text=span.text,
-                metadata=metadata,
-                id_=span.id
-            )
+            doc = Document(text=span.text, metadata=metadata, id_=span.id)
             documents.append(doc)
 
         return documents
 
-    def _create_metadata(
-        self,
-        span: Any,
-        working_set: WorkingSet
-    ) -> Dict[str, Any]:
+    def _create_metadata(self, span: Any, working_set: WorkingSet) -> Dict[str, Any]:
         """
         Create metadata dictionary for a span.
 
@@ -236,7 +222,7 @@ class AvocadoDBReader(BaseReader):
             "artifact_id": span.artifact_id,
             "query": working_set.query,
             "deterministic_hash": working_set.deterministic_hash()[:16],
-            "compilation_time_ms": working_set.compilation_time_ms
+            "compilation_time_ms": working_set.compilation_time_ms,
         }
 
         # Add score if requested
@@ -245,27 +231,21 @@ class AvocadoDBReader(BaseReader):
 
         # Add citations if requested
         if self.include_citations:
-            citations = [
-                c for c in working_set.citations
-                if c.span_id == span.id
-            ]
+            citations = [c for c in working_set.citations if c.span_id == span.id]
             if citations:
                 metadata["citations"] = [
                     {
                         "file": c.artifact_path,
                         "start_line": c.start_line,
                         "end_line": c.end_line,
-                        "score": c.score
+                        "score": c.score,
                     }
                     for c in citations
                 ]
 
         return metadata
 
-    def _create_combined_documents(
-        self,
-        working_set: WorkingSet
-    ) -> List[Document]:
+    def _create_combined_documents(self, working_set: WorkingSet) -> List[Document]:
         """
         Create documents by combining adjacent spans from same file.
 
@@ -289,10 +269,7 @@ class AvocadoDBReader(BaseReader):
             else:
                 # Save current document if exists
                 if current_spans:
-                    doc = self._finalize_combined_document(
-                        current_spans,
-                        working_set
-                    )
+                    doc = self._finalize_combined_document(current_spans, working_set)
                     documents.append(doc)
 
                 # Start new document
@@ -321,9 +298,7 @@ class AvocadoDBReader(BaseReader):
         return 0 <= gap <= 5
 
     def _finalize_combined_document(
-        self,
-        spans: List[Any],
-        working_set: WorkingSet
+        self, spans: List[Any], working_set: WorkingSet
     ) -> Document:
         """
         Create a single document from multiple spans.
@@ -347,15 +322,12 @@ class AvocadoDBReader(BaseReader):
             "token_count": sum(span.token_count for span in spans),
             "query": working_set.query,
             "deterministic_hash": working_set.deterministic_hash()[:16],
-            "compilation_time_ms": working_set.compilation_time_ms
+            "compilation_time_ms": working_set.compilation_time_ms,
         }
 
         # Add scores if available
         if self.include_scores:
-            scores = [
-                span.score for span in spans
-                if hasattr(span, "score")
-            ]
+            scores = [span.score for span in spans if hasattr(span, "score")]
             if scores:
                 metadata["avg_score"] = sum(scores) / len(scores)
                 metadata["max_score"] = max(scores)
@@ -365,10 +337,7 @@ class AvocadoDBReader(BaseReader):
         if self.include_citations:
             all_citations = []
             for span in spans:
-                citations = [
-                    c for c in working_set.citations
-                    if c.span_id == span.id
-                ]
+                citations = [c for c in working_set.citations if c.span_id == span.id]
                 all_citations.extend(citations)
 
             if all_citations:
@@ -384,7 +353,7 @@ class AvocadoDBReader(BaseReader):
                         "file": c.artifact_path,
                         "start_line": c.start_line,
                         "end_line": c.end_line,
-                        "score": c.score
+                        "score": c.score,
                     }
                     for c in unique_citations.values()
                 ]
@@ -392,16 +361,10 @@ class AvocadoDBReader(BaseReader):
         # Create combined ID from span IDs
         combined_id = "_".join(span.id for span in spans)
 
-        return Document(
-            text=combined_text,
-            metadata=metadata,
-            id_=combined_id
-        )
+        return Document(text=combined_text, metadata=metadata, id_=combined_id)
 
     def _convert_to_nodes(
-        self,
-        documents: List[Document],
-        working_set: WorkingSet
+        self, documents: List[Document], working_set: WorkingSet
     ) -> List[TextNode]:
         """
         Convert Documents to TextNodes for more control.
@@ -433,11 +396,8 @@ class AvocadoDBReader(BaseReader):
         return nodes
 
     def lazy_load_data(
-        self,
-        query: str,
-        budget: Optional[int] = None,
-        **kwargs
-    ):
+        self, query: str, budget: Optional[int] = None, **kwargs: Any
+    ) -> Iterator[Document]:
         """
         Lazy load data (generator version).
 
@@ -458,7 +418,7 @@ class AvocadoDBReader(BaseReader):
             semantic_weight=kwargs.get("semantic_weight", self.semantic_weight),
             lexical_weight=kwargs.get("lexical_weight", self.lexical_weight),
             mmr_lambda=kwargs.get("mmr_lambda", self.mmr_lambda),
-            enable_mmr=kwargs.get("enable_mmr", self.enable_mmr)
+            enable_mmr=kwargs.get("enable_mmr", self.enable_mmr),
         )
 
         # Yield documents one at a time
@@ -472,8 +432,4 @@ class AvocadoDBReader(BaseReader):
             metadata = self._create_metadata(span, working_set)
 
             # Yield document
-            yield Document(
-                text=span.text,
-                metadata=metadata,
-                id_=span.id
-            )
+            yield Document(text=span.text, metadata=metadata, id_=span.id)

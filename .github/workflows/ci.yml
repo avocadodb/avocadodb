@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Build
+        run: cargo build --workspace --all-targets
+      - name: Unit tests (workspace)
+        run: cargo test --workspace --exclude avocado-server --exclude avocado-cli -q
+      - name: Determinism tests (CI-safe subset)
+        run: ./scripts/run-tests.sh test
+
+  server-evals-and-stress:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Build server
+        run: cargo build -p avocado-server --release
+      - name: Start server
+        run: |
+          BIND_ADDR=127.0.0.1 PORT=8765 RUST_LOG=warn ./target/release/avocado-server &
+          echo $! > server.pid
+          sleep 1
+          curl -sSf http://127.0.0.1:8765/health >/dev/null
+      - name: Mini evals (5-10 queries)
+        env:
+          BASE_URL: http://127.0.0.1:8765
+        run: |
+          python3 scripts/evals/run_evals.py --base-url "$BASE_URL" --dataset scripts/evals/samples/code_qa.jsonl | tee evals.json
+      - name: Mini stress (reduced)
+        env:
+          BASE_URL: http://127.0.0.1:8765
+          PROJECTS: 2
+          COMPILES: 10
+          CONCURRENCY: 4
+        run: bash scripts/stress-daemon.sh
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then kill $(cat server.pid) || true; fi
+

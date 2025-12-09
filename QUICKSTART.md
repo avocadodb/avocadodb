@@ -18,8 +18,8 @@ source $HOME/.cargo/env
 ## Step 2: Clone and Build
 
 ```bash
-git clone https://github.com/yourusername/avacadodb.git
-cd avacadodb
+git clone https://github.com/yourusername/avocadodb.git
+cd avocadodb
 cargo build --release
 ```
 
@@ -207,7 +207,7 @@ See the [Library Usage](README.md#library-usage-rust) section in the main README
 Then use the REST API:
 
 ```bash
-curl -X POST http://localhost:8080/compile \
+curl -X POST http://localhost:8765/compile \
   -H "Content-Type: application/json" \
   -d '{
     "query": "authentication",

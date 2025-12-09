@@ -28,11 +28,16 @@ pub mod embedding;
 pub mod compiler;
 pub mod db;
 pub mod index;
+pub mod session;
+pub mod approx;
 
 // Re-export commonly used types
 pub use types::{
     Artifact, Citation, CompilerConfig, Error, Result, ScoredSpan, Span, WorkingSet,
+    Session, Message, MessageRole, SessionWorkingSet,
 };
+
+pub use session::{SessionManager, SessionReplay, SessionTurn};
 
 /// The version of AvocadoDB
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

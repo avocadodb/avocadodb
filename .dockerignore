@@ -1,0 +1,105 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation (except README for container)
+*.md
+!README.md
+docs/
+.vision/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Environment files
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+
+# Test files
+tests/
+!tests/Cargo.toml
+*_test.rs
+*.test.ts
+*.test.js
+test/
+spec/
+
+# Database files (will be created in container)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.avocado/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Cache directories
+.cache/
+.fastembed_cache/
+avocado-cli/.fastembed_cache/
+
+# Benchmarks
+benches/
+*.bench
+
+# Coverage
+coverage/
+*.profraw
+*.profdata
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Kubernetes
+k8s/
+
+# Scripts
+scripts/
+
+# Integration tests
+integrations/

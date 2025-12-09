@@ -1,0 +1,168 @@
+name: Publish LlamaIndex Integration to PyPI
+
+on:
+  push:
+    tags:
+      - 'llamaindex-v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 1.0.0)'
+        required: true
+        type: string
+      test_pypi:
+        description: 'Publish to Test PyPI instead of PyPI'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-and-publish:
+    name: Build and Publish to PyPI
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            TAG="llamaindex-v${VERSION}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#llamaindex-v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Verify Poetry installation
+        run: poetry --version
+
+      - name: Update package version
+        working-directory: integrations/llama-index-avocadodb
+        run: |
+          poetry version ${{ steps.version.outputs.version }}
+          cat pyproject.toml | grep "^version"
+
+      - name: Install dependencies
+        working-directory: integrations/llama-index-avocadodb
+        run: poetry install --with dev,test
+
+      - name: Run tests
+        working-directory: integrations/llama-index-avocadodb
+        run: |
+          poetry run pytest tests/ -v --cov=llama_index_avocadodb --cov-report=term-missing
+        continue-on-error: false
+
+      - name: Run linting
+        working-directory: integrations/llama-index-avocadodb
+        run: |
+          poetry run black --check src/
+          poetry run isort --check src/
+          poetry run ruff check src/
+
+      - name: Build package
+        working-directory: integrations/llama-index-avocadodb
+        run: poetry build
+
+      - name: Check distribution
+        working-directory: integrations/llama-index-avocadodb
+        run: |
+          pip install twine
+          twine check dist/*
+
+      - name: Verify package contents
+        working-directory: integrations/llama-index-avocadodb
+        run: |
+          tar tzf dist/*.tar.gz
+          ls -lh dist/
+
+      - name: Publish to Test PyPI
+        if: github.event.inputs.test_pypi == 'true'
+        working-directory: integrations/llama-index-avocadodb
+        env:
+          POETRY_PYPI_TOKEN_TESTPYPI: ${{ secrets.TEST_PYPI_TOKEN }}
+        run: |
+          poetry config repositories.testpypi https://test.pypi.org/legacy/
+          poetry publish -r testpypi
+
+      - name: Publish to PyPI
+        if: github.event.inputs.test_pypi != 'true'
+        working-directory: integrations/llama-index-avocadodb
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_TOKEN }}
+        run: poetry publish
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: llama-index-avocadodb v${{ steps.version.outputs.version }}
+          body: |
+            # llama-index-avocadodb v${{ steps.version.outputs.version }}
+
+            LlamaIndex integration for AvocadoDB - deterministic, citation-backed document loading for RAG.
+
+            ## Installation
+
+            ```bash
+            pip install llama-index-avocadodb==${{ steps.version.outputs.version }}
+            ```
+
+            ## What's Included
+
+            - Deterministic context retrieval with citations
+            - Session management for conversation history
+            - Full LlamaIndex compatibility
+            - Type-safe Python interface
+            - Document reader and vector store support
+
+            ## Documentation
+
+            - [Integration Guide](https://docs.avocadodb.com/integrations/llamaindex)
+            - [API Reference](https://docs.avocadodb.com/api/python/llamaindex)
+            - [Examples](https://github.com/avocadodb/avocadodb/tree/master/integrations/llama-index-avocadodb/examples)
+
+            ---
+
+            Generated with [Claude Code](https://claude.com/claude-code)
+
+            Co-Authored-By: Claude <noreply@anthropic.com>
+          files: integrations/llama-index-avocadodb/dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## Package Published Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** llama-index-avocadodb" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.test_pypi }}" = "true" ]; then
+            echo "**Registry:** Test PyPI" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Install with: \`pip install -i https://test.pypi.org/simple/ llama-index-avocadodb==${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Registry:** PyPI" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Install with: \`pip install llama-index-avocadodb==${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          fi

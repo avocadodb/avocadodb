@@ -22,7 +22,7 @@ Example:
 """
 
 import os
-from typing import Any, Type
+from typing import Type
 
 from pydantic import BaseModel, Field
 

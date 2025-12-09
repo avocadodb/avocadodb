@@ -20,12 +20,12 @@ def main():
     print("=" * 60)
 
     # Initialize client (connects to running server)
-    db = AvocadoDB("http://localhost:8080")
+    db = AvocadoDB("http://localhost:8765")
 
     # Check database stats
     try:
         stats = db.stats()
-        print(f"\nDatabase Stats:")
+        print("\nDatabase Stats:")
         print(f"  Artifacts: {stats.get('artifacts', 0)}")
         print(f"  Spans:     {stats.get('spans', 0)}")
         print(f"  Tokens:    {stats.get('tokens', 0)}")
@@ -45,7 +45,7 @@ def main():
     query = "How does authentication work?"
     print(f"\n{'=' * 60}")
     print(f"Query: '{query}'")
-    print(f"Running compilation 3 times...\n")
+    print("Running compilation 3 times...\n")
 
     results = []
     hashes = []
@@ -72,7 +72,7 @@ def main():
 
     if results[0] == results[1] == results[2]:
         print("✅ PASS: All results are identical!")
-        print(f"   Same text content across all runs")
+        print("   Same text content across all runs")
     else:
         print("❌ FAIL: Results differ!")
 

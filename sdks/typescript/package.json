@@ -41,12 +41,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/servesys-labs/avacadodb"
+    "url": "https://github.com/avocadodb/avocadodb"
   },
   "bugs": {
-    "url": "https://github.com/servesys-labs/avacadodb/issues"
+    "url": "https://github.com/avocadodb/avocadodb/issues"
   },
-  "homepage": "https://github.com/servesys-labs/avacadodb#readme",
+  "homepage": "https://github.com/avocadodb/avocadodb#readme",
   "dependencies": {
     "node-fetch": "^2.6.7",
     "glob": "^10.0.0"

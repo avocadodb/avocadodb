@@ -15,6 +15,7 @@ avocado-core = { path = "../avocado-core" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
+tower = { workspace = true, features = ["limit"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
@@ -23,3 +24,9 @@ log = { workspace = true }
 uuid = { workspace = true }
 sha2 = { workspace = true }
 chrono = { workspace = true }
+utoipa = { version = "4.2", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "6.0", features = ["axum"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tempfile = "3.8"

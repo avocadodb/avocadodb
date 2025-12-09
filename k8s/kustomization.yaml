@@ -1,0 +1,65 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace for all resources
+namespace: default
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: avocadodb
+  app.kubernetes.io/instance: avocadodb
+  app.kubernetes.io/version: "0.1.0"
+  app.kubernetes.io/component: database
+  app.kubernetes.io/part-of: avocadodb
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources to deploy
+resources:
+  - configmap.yaml
+  - persistent-volume.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+# Optional: include secrets (use sealed-secrets in production)
+# - secrets.yaml
+
+# Image configuration
+images:
+  - name: avocadodb/avocadodb
+    newTag: latest
+
+# ConfigMap generator (alternative to configmap.yaml)
+# configMapGenerator:
+#   - name: avocadodb-config
+#     literals:
+#       - log_level=info
+#       - embedding_model=nomic
+#       - embedding_provider=local
+
+# Secret generator (for development only)
+# secretGenerator:
+#   - name: avocadodb-secrets
+#     literals:
+#       - openai_api_key=sk-dev-key
+
+# Replicas (can be overridden per environment)
+replicas:
+  - name: avocadodb
+    count: 3
+
+# Resource patches for different environments
+# patchesStrategicMerge:
+#   - overlays/production/resources.yaml
+
+# JSON patches for specific modifications
+# patchesJson6902:
+#   - target:
+#       group: apps
+#       version: v1
+#       kind: Deployment
+#       name: avocadodb
+#     patch: |-
+#       - op: replace
+#         path: /spec/replicas
+#         value: 5

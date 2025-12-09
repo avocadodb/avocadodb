@@ -45,6 +45,13 @@ setup(
     install_requires=[
         "requests>=2.28.0",
     ],
+    entry_points={
+        "console_scripts": [
+            # Preserve common spellings
+            "avocado-cli=avocado_cli.main:cli_main",
+            "avacado-cli=avocado_cli.main:cli_main",
+        ]
+    },
     extras_require={
         "llm": [
             "transformers>=4.35.0",

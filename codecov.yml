@@ -1,0 +1,81 @@
+# Codecov Configuration for AvocadoDB
+# https://docs.codecov.io/docs/codecov-yaml
+
+coverage:
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 2%
+        if_ci_failed: error
+    patch:
+      default:
+        target: 70%
+        threshold: 5%
+        if_ci_failed: error
+
+  precision: 2
+  round: down
+  range: 60...100
+
+# Ignore paths for coverage calculation
+ignore:
+  - "tests/**/*"
+  - "**/tests/**/*"
+  - "**/*_test.rs"
+  - "**/*_test.py"
+  - "**/*.test.ts"
+  - "**/*.test.js"
+  - "examples/**/*"
+  - "**/examples/**/*"
+  - "benches/**/*"
+  - "**/benches/**/*"
+  - "target/**/*"
+  - "dist/**/*"
+  - "node_modules/**/*"
+  - ".github/**/*"
+
+# Flags for different components
+flags:
+  rust:
+    paths:
+      - "avocado-core/"
+      - "avocado-server/"
+      - "avocado-cli/"
+    carryforward: true
+    
+  python-sdk:
+    paths:
+      - "sdks/python/"
+    carryforward: true
+    
+  typescript-sdk:
+    paths:
+      - "sdks/typescript/"
+    carryforward: true
+    
+  langchain-integration:
+    paths:
+      - "integrations/langchain-avocadodb/"
+    carryforward: true
+    
+  llamaindex-integration:
+    paths:
+      - "integrations/llama-index-avocadodb/"
+    carryforward: true
+
+# Comment settings for pull requests
+comment:
+  layout: "diff, files, footer"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+# GitHub checks
+github_checks:
+  annotations: true
+
+# Codecov AI
+codecov_ai:
+  enabled: true

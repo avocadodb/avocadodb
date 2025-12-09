@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: avocadodb-config
+  labels:
+    app: avocadodb
+data:
+  # Server configuration
+  log_level: "info"
+
+  # Embedding configuration
+  # Options: minilm (384d), nomic/nomicv15 (768d), bgelarge (1024d)
+  embedding_model: "nomic"
+
+  # Embedding provider: local or openai
+  embedding_provider: "local"
+
+  # Performance tuning
+  # max_projects_in_memory: "10"

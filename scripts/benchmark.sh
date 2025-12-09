@@ -6,6 +6,8 @@ set -e
 
 AVOCADO="./target/release/avocado"
 ITERATIONS=10
+SERVER="./target/release/avocado-server"
+SERVER_URL="http://localhost:8765"
 
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║         AvocadoDB Performance Benchmark Suite                ║"
@@ -111,6 +113,39 @@ run_benchmark() {
 # Show database stats
 echo "Database Statistics:"
 $AVOCADO stats
+echo ""
+
+# Warm vs Cold test (daemon)
+echo "══════════════════════════════════════════════════════════════"
+echo "  WARM vs COLD START (Daemon)"
+echo "══════════════════════════════════════════════════════════════"
+echo ""
+
+# Ensure server is running
+if ! curl -s "$SERVER_URL/health" >/dev/null; then
+  echo "Starting server..."
+  BIND_ADDR=127.0.0.1 PORT=8765 "$SERVER" >/tmp/avocado-server.log 2>&1 &
+  sleep 0.6
+fi
+
+QUERY_WARM_COLD="authentication methods and security"
+BUDGET_WARM_COLD=8000
+
+# Restart server to simulate cold index (in-memory drop)
+pkill -f avocado-server || true
+sleep 0.3
+BIND_ADDR=127.0.0.1 PORT=8765 "$SERVER" >/tmp/avocado-server.log 2>&1 &
+sleep 0.6
+
+echo "- Cold compile (first after restart)"
+COLD_OUTPUT=$(RUST_LOG=avocado_core=info $AVOCADO compile "$QUERY_WARM_COLD" --budget $BUDGET_WARM_COLD 2>&1 || true)
+COLD_MS=$(echo "$COLD_OUTPUT" | grep "Total compilation time:" | grep -oE '[0-9]+' | tail -1)
+echo "  Cold: ${COLD_MS:-n/a} ms"
+
+echo "- Warm compile (second call)"
+WARM_OUTPUT=$(RUST_LOG=avocado_core=info $AVOCADO compile "$QUERY_WARM_COLD" --budget $BUDGET_WARM_COLD 2>&1 || true)
+WARM_MS=$(echo "$WARM_OUTPUT" | grep "Total compilation time:" | grep -oE '[0-9]+' | tail -1)
+echo "  Warm: ${WARM_MS:-n/a} ms"
 echo ""
 
 echo "══════════════════════════════════════════════════════════════"

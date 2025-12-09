@@ -207,7 +207,7 @@ Tokens are issued for authenticated sessions.
     let mut spans = span::extract_spans(&content, &artifact_id).unwrap();
 
     let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
-    let embeddings = avocado_core::embedding::embed_batch(texts, None)
+    let embeddings = avocado_core::embedding::embed_batch(texts, None, None)
         .await
         .unwrap();
 

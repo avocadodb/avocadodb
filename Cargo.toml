@@ -23,7 +23,8 @@ rusqlite = { version = "0.30", features = ["bundled"] }
 # HTTP client & server
 reqwest = { version = "0.11", features = ["json"] }
 axum = "0.7"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit"] }
+tower = "0.4"
 
 # Utilities
 uuid = { version = "1.6", features = ["v4", "serde"] }
@@ -45,3 +46,4 @@ tiktoken-rs = "0.5"
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }
+

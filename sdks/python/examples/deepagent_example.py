@@ -15,7 +15,6 @@ Setup:
     4. Run: python examples/deepagent_example.py
 """
 
-import os
 from deepagents import create_deep_agent
 from avocado import avocado_compile_context
 
@@ -126,7 +125,7 @@ if __name__ == "__main__":
         db = AvocadoDB()
         stats = db.stats()
         print(f"✅ AvocadoDB server is running ({stats['spans']} spans available)\n")
-    except Exception as e:
+    except Exception:
         print("⚠️  AvocadoDB server not reachable!")
         print("\nMake sure to:")
         print("  1. Start server: ./target/release/avocado-server")

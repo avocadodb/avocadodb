@@ -194,8 +194,15 @@ fn hybrid_fusion(
         .map(|(_, (span, score))| ScoredSpan { span, score })
         .collect();
 
-    // Sort by score descending
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    // Sort by score descending with deterministic tiebreakers:
+    // then by (artifact_id, start_line) to ensure canonical order on equal scores
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.span.artifact_id.cmp(&b.span.artifact_id))
+            .then_with(|| a.span.start_line.cmp(&b.span.start_line))
+    });
 
     results
 }

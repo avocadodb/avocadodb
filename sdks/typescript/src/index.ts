@@ -74,3 +74,17 @@ export {
   formatWorkingSet,
   CitationStyle,
 } from './utils';
+
+// Session management (v2.0)
+export {
+  Session,
+  SessionManager,
+  Message,
+  MessageRole,
+  SessionInfo,
+  SessionTurn,
+  SessionReplay,
+  CreateSessionOptions,
+  SessionCompileOptions,
+  SessionCompileResult,
+} from './session';

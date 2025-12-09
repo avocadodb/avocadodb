@@ -4,15 +4,17 @@ AvocadoDB client implementation.
 Supports both HTTP server mode and CLI mode (direct binary calls).
 CLI mode is recommended for multi-repo usage (no server management needed).
 """
+from __future__ import annotations
 
 import requests
 import subprocess
-import json
 import os
 from pathlib import Path
-from typing import Optional, Dict, List, Any, Literal
+from typing import Optional, Dict, List, Any, Literal, TYPE_CHECKING
 from dataclasses import dataclass
 import hashlib
+if TYPE_CHECKING:
+    from .session import Session, SessionInfo
 
 
 @dataclass
@@ -46,9 +48,11 @@ class Span:
     end_line: int
     text: str
     token_count: int
+    artifact_path: Optional[str] = None
     embedding: Optional[List[float]] = None
     embedding_model: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    score: Optional[float] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Span':
@@ -59,9 +63,11 @@ class Span:
             end_line=data['end_line'],
             text=data['text'],
             token_count=data['token_count'],
+            artifact_path=data.get('artifact_path'),
             embedding=data.get('embedding'),
             embedding_model=data.get('embedding_model'),
-            metadata=data.get('metadata')
+            metadata=data.get('metadata'),
+            score=data.get('score')
         )
 
 
@@ -71,8 +77,20 @@ class WorkingSet:
     def __init__(self, data: Dict[str, Any]):
         """Initialize from API response data."""
         self.text: str = data['text']
-        self.spans: List[Span] = [Span.from_dict(s) for s in data['spans']]
         self.citations: List[Citation] = [Citation.from_dict(c) for c in data['citations']]
+
+        # Build artifact_id -> artifact_path mapping from citations
+        artifact_paths = {c.artifact_id: c.artifact_path for c in self.citations}
+
+        # Enrich spans with artifact_path from citations
+        self.spans: List[Span] = []
+        for span_data in data['spans']:
+            span = Span.from_dict(span_data)
+            # Add artifact_path if not already present
+            if not span.artifact_path and span.artifact_id in artifact_paths:
+                span.artifact_path = artifact_paths[span.artifact_id]
+            self.spans.append(span)
+
         self.tokens_used: int = data['tokens_used']
         self.query: str = data['query']
         self.compilation_time_ms: int = data['compilation_time_ms']
@@ -173,24 +191,19 @@ class AvocadoDB:
             # Auto-detect project path (current working directory)
             self.project_path = str(Path.cwd().resolve())
     
+    def _http_request(self, method: str, path: str, **kwargs):
+        """Internal helper for HTTP requests (used in tests via patching)."""
+        if self.mode != "http":
+            raise NotImplementedError("HTTP requests only available in HTTP mode")
+        url = f"{self.url.rstrip('/')}/{path.lstrip('/')}"
+        return self.session.request(method=method.upper(), url=url, **kwargs)
+    
     def _find_cli_binary(self) -> Optional[str]:
         """Find AvocadoDB CLI binary in common locations.
         
         Returns:
             Path to binary if found, None otherwise
         """
-        # Check environment variable first
-        env_binary = os.environ.get("AVOCADODB_CLI_BINARY")
-        if env_binary:
-            env_path = Path(env_binary).expanduser()
-            if env_path.exists() and env_path.is_file():
-                return str(env_path.resolve())
-            # Also check if it's in PATH
-            import shutil
-            found = shutil.which(env_binary)
-            if found:
-                return found
-        
         # Search common locations
         import shutil
         
@@ -230,14 +243,14 @@ class AvocadoDB:
                 "init",
                 "--path", str(self.db_path),
             ]
-            result = subprocess.run(
+            subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 check=True,
                 cwd=Path.cwd()  # Run from current working directory
             )
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError:
             # If init fails, database might be created on first use anyway
             # (Database::new() creates it automatically)
             pass
@@ -601,6 +614,119 @@ class AvocadoDB:
             import warnings
             warnings.warn(f"LLM generation failed: {e}. Returning context text.")
             return context.text
+
+    def create_session(
+        self,
+        user_id: Optional[str] = None,
+        title: Optional[str] = None
+    ) -> 'Session':
+        """Create a new conversation session.
+
+        Args:
+            user_id: Optional user identifier
+            title: Optional session title
+
+        Returns:
+            Session object
+
+        Raises:
+            NotImplementedError: If using CLI mode (sessions require HTTP mode)
+            requests.HTTPError: If API request fails
+
+        Example:
+            >>> db = AvocadoDB()
+            >>> session = db.create_session(user_id="alice", title="Q&A about Rust")
+            >>> result = session.compile("What is Rust?")
+        """
+        if self.mode == "cli":
+            raise NotImplementedError(
+                "Session management requires HTTP mode. "
+                "Initialize client with mode='http' to use sessions."
+            )
+
+        from .session import Session, SessionInfo
+
+        resp = self._http_request(
+            "POST",
+            "/sessions",
+            json={
+                "user_id": user_id,
+                "title": title,
+                "project": self.project_path
+            }
+        )
+        data = resp.json() if hasattr(resp, "json") else resp
+        session_info = SessionInfo.from_dict(data['session'])
+
+        return Session(self, session_info.id, session_info)
+
+    def get_session(self, session_id: str) -> 'Session':
+        """Get an existing session by ID.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Session object
+
+        Raises:
+            NotImplementedError: If using CLI mode
+            requests.HTTPError: If session not found or API request fails
+
+        Example:
+            >>> session = db.get_session("session-123")
+            >>> history = session.get_history()
+        """
+        if self.mode == "cli":
+            raise NotImplementedError(
+                "Session management requires HTTP mode. "
+                "Initialize client with mode='http' to use sessions."
+            )
+
+        from .session import Session
+
+        # Session will lazily load its info on first access
+        return Session(self, session_id)
+
+    def list_sessions(
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None
+    ) -> List['SessionInfo']:
+        """List sessions.
+
+        Args:
+            user_id: Optional filter by user ID
+            limit: Optional limit on number of sessions returned
+
+        Returns:
+            List of session dicts
+
+        Raises:
+            NotImplementedError: If using CLI mode
+            requests.HTTPError: If API request fails
+
+        Example:
+            >>> sessions = db.list_sessions(user_id="alice", limit=10)
+            >>> for s in sessions:
+            ...     print(f"{s['id']}: {s['title']}")
+        """
+        if self.mode == "cli":
+            raise NotImplementedError(
+                "Session management requires HTTP mode. "
+                "Initialize client with mode='http' to use sessions."
+            )
+
+        params: Dict[str, Any] = {"project": self.project_path}
+        if user_id is not None:
+            params["user_id"] = user_id
+        if limit is not None:
+            params["limit"] = limit
+
+        resp = self._http_request("GET", "/sessions", params=params)
+        data = resp.json() if hasattr(resp, "json") else resp
+        from .session import SessionInfo
+        return [SessionInfo.from_dict(s) for s in data['sessions']]
 
     def close(self):
         """Close the HTTP session (no-op in CLI mode)."""

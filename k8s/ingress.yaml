@@ -1,0 +1,101 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: avocadodb
+  labels:
+    app: avocadodb
+  annotations:
+    # NGINX ingress controller annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+
+    # TLS/SSL annotations (uncomment if using cert-manager)
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+    # Rate limiting
+    # nginx.ingress.kubernetes.io/limit-rps: "10"
+
+    # CORS (if needed)
+    # nginx.ingress.kubernetes.io/enable-cors: "true"
+    # nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: avocadodb.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: avocadodb
+            port:
+              number: 8765
+
+  # TLS configuration (uncomment to enable HTTPS)
+  # tls:
+  # - hosts:
+  #   - avocadodb.example.com
+  #   secretName: avocadodb-tls
+
+---
+# Optional: Traefik Ingress
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: avocadodb-traefik
+#   labels:
+#     app: avocadodb
+#   annotations:
+#     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+#     traefik.ingress.kubernetes.io/router.tls: "true"
+#     traefik.ingress.kubernetes.io/router.middlewares: default-ratelimit@kubernetescrd
+# spec:
+#   ingressClassName: traefik
+#   rules:
+#   - host: avocadodb.example.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: avocadodb
+#             port:
+#               number: 8765
+#   tls:
+#   - hosts:
+#     - avocadodb.example.com
+#     secretName: avocadodb-tls
+
+---
+# Optional: AWS ALB Ingress
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: avocadodb-alb
+#   labels:
+#     app: avocadodb
+#   annotations:
+#     kubernetes.io/ingress.class: alb
+#     alb.ingress.kubernetes.io/scheme: internet-facing
+#     alb.ingress.kubernetes.io/target-type: ip
+#     alb.ingress.kubernetes.io/healthcheck-path: /health
+#     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+#     alb.ingress.kubernetes.io/ssl-redirect: '443'
+# spec:
+#   rules:
+#   - host: avocadodb.example.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: avocadodb
+#             port:
+#               number: 8765

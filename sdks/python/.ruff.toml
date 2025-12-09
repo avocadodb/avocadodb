@@ -1,0 +1,15 @@
+target-version = "py312"
+
+[lint]
+select = ["E", "F"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+"avocado/ingest.py" = ["E722"]
+"avocado/manager.py" = ["E722"]
+"avocado/monitor.py" = ["E722"]
+"avocado/integrations/langchain.py" = ["E722"]
+"examples/ask_example.py" = ["E402", "E722"]
+"examples/session_replay_example.py" = ["F841"]
+"tests/test_session_integration.py" = ["F841"]
+

@@ -1,0 +1,122 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - develop
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+      - main
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: avocadodb/avocadodb
+
+jobs:
+  build-and-test:
+    name: Build and Test Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: avocadodb/avocadodb:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+      - name: Test Docker image
+        run: |
+          docker run -d --name avocadodb-test -p 8765:8765 -e RUST_LOG=info avocadodb/avocadodb:test
+          sleep 10
+          docker ps | grep avocadodb-test
+          docker logs avocadodb-test
+          for i in {1..30}; do
+            if curl -f http://localhost:8765/health; then
+              echo "Health check passed"
+              break
+            fi
+            sleep 2
+          done
+          curl -f http://localhost:8765/stats
+          docker stop avocadodb-test
+          docker rm avocadodb-test
+      - name: Check image size
+        run: |
+          SIZE=$(docker image inspect avocadodb/avocadodb:test --format='{{.Size}}')
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "Image size: ${SIZE_MB}MB"
+
+  build-multiarch:
+    name: Build Multi-Architecture Images
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/avocadodb/avocadodb
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: build-multiarch
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

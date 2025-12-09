@@ -1,0 +1,176 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in AvocadoDB
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out this form as completely as possible.
+
+  - type: checkboxes
+    id: pre-check
+    attributes:
+      label: Pre-flight Checklist
+      description: Please ensure you've completed these steps before submitting
+      options:
+        - label: I have searched existing issues to ensure this bug hasn't been reported before
+          required: true
+        - label: I am using the latest version of AvocadoDB
+          required: true
+        - label: I have read the documentation
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is
+      placeholder: Tell us what went wrong
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe the expected outcome
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Describe what actually occurred
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the bug
+      placeholder: |
+        1. Initialize database with...
+        2. Insert vectors using...
+        3. Query with...
+        4. Observe error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Code Sample
+      description: If applicable, provide a minimal code sample that reproduces the issue
+      render: rust
+      placeholder: |
+        // Your code here
+        use avocado_core::Database;
+
+        let db = Database::new("test.db")?;
+        // ...
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component is affected?
+      options:
+        - Core (avocado-core)
+        - CLI (avocado-cli)
+        - Server (avocado-server)
+        - Python bindings
+        - TypeScript bindings
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: AvocadoDB Version
+      description: What version of AvocadoDB are you using?
+      placeholder: "e.g., 1.0.0, commit hash, or 'main' branch"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What OS are you using?
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS Version
+      description: What version of your operating system?
+      placeholder: "e.g., Ubuntu 22.04, macOS 14.1, Windows 11"
+
+  - type: dropdown
+    id: rust-version
+    attributes:
+      label: Rust Version (if applicable)
+      description: If you're building from source or using Rust bindings
+      options:
+        - Latest stable
+        - 1.75+
+        - 1.70-1.74
+        - Older than 1.70
+        - Not applicable
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: Include relevant error messages, stack traces, or logs
+      render: shell
+      placeholder: |
+        Error: Vector dimension mismatch
+        Expected: 768, Got: 384
+        at ...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem
+      placeholder: |
+        - Dataset size: ~1M vectors
+        - Memory usage: ~8GB
+        - Running in Docker container
+        - Using custom embedding model
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is this bug?
+      options:
+        - Critical (data loss, crashes, security issues)
+        - High (major functionality broken)
+        - Medium (feature not working as expected)
+        - Low (minor issue, workaround available)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: willing-to-fix
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to submit a PR to fix this bug

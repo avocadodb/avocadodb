@@ -19,7 +19,7 @@ async function main() {
   console.log('='.repeat(60));
 
   // Initialize client (connects to running server)
-  const db = new AvocadoDB('http://localhost:8080');
+  const db = new AvocadoDB('http://localhost:8765');
 
   // Check if server is reachable
   const isOnline = await db.ping();

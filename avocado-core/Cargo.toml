@@ -34,3 +34,14 @@ fastembed = "5.2.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
+criterion = { workspace = true }
+tempfile = "3.8"
+libc = "0.2"
+
+[[bench]]
+name = "session_bench"
+harness = false
+
+[[bench]]
+name = "warm_cold_bench"
+harness = false

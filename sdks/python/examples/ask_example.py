@@ -32,7 +32,7 @@ def main():
     try:
         db = AvocadoDB(url="http://localhost:8765")
         stats = db.stats()
-        print(f"✅ Connected to AvocadoDB")
+        print("✅ Connected to AvocadoDB")
         print(f"   Database: {stats.get('artifacts_count', 0)} artifacts, {stats.get('spans_count', 0)} spans\n")
     except Exception as e:
         print(f"❌ Cannot connect to AvocadoDB server: {e}")

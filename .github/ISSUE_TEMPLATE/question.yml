@@ -1,0 +1,129 @@
+name: Question
+description: Ask a question about using AvocadoDB
+title: "[Question]: "
+labels: ["question"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about AvocadoDB? We're here to help!
+
+        **Note**: For in-depth discussions or open-ended questions, consider using [GitHub Discussions](../../discussions) instead.
+
+  - type: checkboxes
+    id: pre-check
+    attributes:
+      label: Pre-flight Checklist
+      description: Please check these before asking your question
+      options:
+        - label: I have searched existing issues and discussions
+          required: true
+        - label: I have checked the documentation
+          required: true
+        - label: I have reviewed the examples in the repository
+          required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: What would you like to know?
+      placeholder: |
+        How do I...?
+        What is the best way to...?
+        Can AvocadoDB support...?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category
+      description: What is your question about?
+      options:
+        - Installation & Setup
+        - Usage & API
+        - Performance & Optimization
+        - Configuration
+        - Integration & Deployment
+        - Architecture & Design
+        - Troubleshooting
+        - Best Practices
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide context about what you're trying to achieve
+      placeholder: |
+        I'm working on a project that involves...
+        I'm trying to implement...
+        I need to understand...
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What Have You Tried?
+      description: What have you already attempted or researched?
+      placeholder: |
+        I tried...
+        I looked at...
+        I read...
+
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Relevant Code
+      description: (Optional) Include any relevant code snippets
+      render: rust
+      placeholder: |
+        // Your code here
+        use avocado_core::Database;
+
+        // What I'm trying to do...
+
+  - type: input
+    id: version
+    attributes:
+      label: AvocadoDB Version
+      description: What version are you using?
+      placeholder: "e.g., 1.0.0, main branch"
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Programming Language
+      description: Which language binding are you using?
+      options:
+        - Rust
+        - Python
+        - TypeScript/JavaScript
+        - Other
+        - Not applicable
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Where are you running AvocadoDB?
+      options:
+        - Development (local)
+        - Production
+        - Docker
+        - Cloud (AWS/GCP/Azure)
+        - Other
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Information
+      description: Any other details that might help us answer your question
+      placeholder: |
+        - Dataset size: ...
+        - Performance requirements: ...
+        - Related resources: ...

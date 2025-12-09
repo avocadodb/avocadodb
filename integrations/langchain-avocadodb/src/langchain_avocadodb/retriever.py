@@ -15,8 +15,7 @@ try:
     from avocado import AvocadoDB, WorkingSet
 except ImportError:
     raise ImportError(
-        "AvocadoDB Python SDK is required. "
-        "Install with: pip install avocadodb"
+        "AvocadoDB Python SDK is required. " "Install with: pip install avocadodb"
     )
 
 logger = logging.getLogger(__name__)
@@ -55,53 +54,45 @@ class AvocadoDBRetriever(BaseRetriever):
         >>> print(result["answer"])
         >>> # Sources include line-level citations
         >>> for doc in result["source_documents"]:
-        ...     print(f"Source: {doc.metadata['source']}:{doc.metadata['start_line']}-{doc.metadata['end_line']}")
+        ...     m = doc.metadata
+        ...     print(f"Source: {m['source']}:{m['start_line']}-{m['end_line']}")
     """
 
     # Configuration fields
     url: str = Field(
-        default="http://localhost:8765",
-        description="AvocadoDB server URL"
+        default="http://localhost:8765", description="AvocadoDB server URL"
     )
     mode: str = Field(
-        default="http",
-        description="Connection mode: 'http' (server) or 'cli' (direct)"
+        default="http", description="Connection mode: 'http' (server) or 'cli' (direct)"
     )
     budget: int = Field(
-        default=8000,
-        description="Token budget for context compilation"
+        default=8000, description="Token budget for context compilation"
     )
     semantic_weight: float = Field(
-        default=0.7,
-        description="Weight for semantic (vector) search (0.0-1.0)"
+        default=0.7, description="Weight for semantic (vector) search (0.0-1.0)"
     )
     lexical_weight: float = Field(
-        default=0.3,
-        description="Weight for lexical (keyword) search (0.0-1.0)"
+        default=0.3, description="Weight for lexical (keyword) search (0.0-1.0)"
     )
     mmr_lambda: float = Field(
-        default=0.5,
-        description="MMR diversity parameter (0.0=diverse, 1.0=relevant)"
+        default=0.5, description="MMR diversity parameter (0.0=diverse, 1.0=relevant)"
     )
     enable_mmr: bool = Field(
         default=True,
-        description="Enable Maximal Marginal Relevance for result diversity"
+        description="Enable Maximal Marginal Relevance for result diversity",
     )
     include_citations: bool = Field(
-        default=True,
-        description="Include citation information in metadata"
+        default=True, description="Include citation information in metadata"
     )
     include_scores: bool = Field(
-        default=True,
-        description="Include relevance scores in metadata"
+        default=True, description="Include relevance scores in metadata"
     )
     combine_spans: bool = Field(
         default=False,
-        description="Combine adjacent spans from same file into single documents"
+        description="Combine adjacent spans from same file into single documents",
     )
     min_score: Optional[float] = Field(
-        default=None,
-        description="Minimum score threshold for returned documents"
+        default=None, description="Minimum score threshold for returned documents"
     )
 
     # Private client instance
@@ -109,6 +100,7 @@ class AvocadoDBRetriever(BaseRetriever):
 
     class Config:
         """Pydantic config."""
+
         arbitrary_types_allowed = True
         extra = "forbid"
 
@@ -135,7 +127,7 @@ class AvocadoDBRetriever(BaseRetriever):
         self,
         query: str,
         *,
-        run_manager: Optional[CallbackManagerForRetrieverRun] = None
+        run_manager: Optional[CallbackManagerForRetrieverRun] = None,
     ) -> List[Document]:
         """
         Get documents relevant to a query using AvocadoDB.
@@ -159,7 +151,7 @@ class AvocadoDBRetriever(BaseRetriever):
                 semantic_weight=self.semantic_weight,
                 lexical_weight=self.lexical_weight,
                 mmr_lambda=self.mmr_lambda,
-                enable_mmr=self.enable_mmr
+                enable_mmr=self.enable_mmr,
             )
         except Exception as e:
             logger.error(f"AvocadoDB compilation failed: {e}")
@@ -173,7 +165,7 @@ class AvocadoDBRetriever(BaseRetriever):
                 f"Found {len(working_set.spans)} spans, "
                 f"{working_set.tokens_used} tokens, "
                 f"in {working_set.compilation_time_ms}ms\n",
-                color="green"
+                color="green",
             )
 
         # Convert spans to LangChain Documents
@@ -182,7 +174,8 @@ class AvocadoDBRetriever(BaseRetriever):
         # Filter by minimum score if specified
         if self.min_score is not None:
             documents = [
-                doc for doc in documents
+                doc
+                for doc in documents
                 if doc.metadata.get("score", 0) >= self.min_score
             ]
 
@@ -192,7 +185,7 @@ class AvocadoDBRetriever(BaseRetriever):
         self,
         query: str,
         *,
-        run_manager: Optional[CallbackManagerForRetrieverRun] = None
+        run_manager: Optional[CallbackManagerForRetrieverRun] = None,
     ) -> List[Document]:
         """
         Async version of document retrieval.
@@ -223,19 +216,12 @@ class AvocadoDBRetriever(BaseRetriever):
             for span in working_set.spans:
                 metadata = self._create_metadata(span, working_set)
 
-                doc = Document(
-                    page_content=span.text,
-                    metadata=metadata
-                )
+                doc = Document(page_content=span.text, metadata=metadata)
                 documents.append(doc)
 
         return documents
 
-    def _create_metadata(
-        self,
-        span: Any,
-        working_set: WorkingSet
-    ) -> Dict[str, Any]:
+    def _create_metadata(self, span: Any, working_set: WorkingSet) -> Dict[str, Any]:
         """
         Create metadata for a document from a span.
 
@@ -262,16 +248,13 @@ class AvocadoDBRetriever(BaseRetriever):
 
         # Add citations if requested
         if self.include_citations:
-            citations = [
-                c for c in working_set.citations
-                if c.span_id == span.id
-            ]
+            citations = [c for c in working_set.citations if c.span_id == span.id]
             if citations:
                 metadata["citations"] = [
                     {
                         "file": c.artifact_path,
                         "lines": f"{c.start_line}-{c.end_line}",
-                        "score": c.score
+                        "score": c.score,
                     }
                     for c in citations
                 ]
@@ -303,27 +286,25 @@ class AvocadoDBRetriever(BaseRetriever):
             else:
                 # Save current document if exists
                 if current_doc:
-                    documents.append(self._finalize_combined_doc(
-                        current_doc,
-                        current_spans,
-                        working_set
-                    ))
+                    documents.append(
+                        self._finalize_combined_doc(
+                            current_doc, current_spans, working_set
+                        )
+                    )
 
                 # Start new document
                 current_spans = [span]
                 current_doc = {
                     "source": span.artifact_path,
                     "start_line": span.start_line,
-                    "text": ""
+                    "text": "",
                 }
 
         # Save final document
         if current_doc:
-            documents.append(self._finalize_combined_doc(
-                current_doc,
-                current_spans,
-                working_set
-            ))
+            documents.append(
+                self._finalize_combined_doc(current_doc, current_spans, working_set)
+            )
 
         return documents
 
@@ -342,10 +323,7 @@ class AvocadoDBRetriever(BaseRetriever):
         return 0 <= gap <= 5
 
     def _finalize_combined_doc(
-        self,
-        doc_info: Dict[str, Any],
-        spans: List[Any],
-        working_set: WorkingSet
+        self, doc_info: Dict[str, Any], spans: List[Any], working_set: WorkingSet
     ) -> Document:
         """
         Finalize a combined document from multiple spans.
@@ -375,10 +353,7 @@ class AvocadoDBRetriever(BaseRetriever):
         if self.include_citations:
             all_citations = []
             for span in spans:
-                citations = [
-                    c for c in working_set.citations
-                    if c.span_id == span.id
-                ]
+                citations = [c for c in working_set.citations if c.span_id == span.id]
                 all_citations.extend(citations)
 
             if all_citations:
@@ -386,21 +361,14 @@ class AvocadoDBRetriever(BaseRetriever):
                     {
                         "file": c.artifact_path,
                         "lines": f"{c.start_line}-{c.end_line}",
-                        "score": c.score
+                        "score": c.score,
                     }
                     for c in all_citations
                 ]
 
-        return Document(
-            page_content=combined_text,
-            metadata=metadata
-        )
+        return Document(page_content=combined_text, metadata=metadata)
 
-    def get_relevant_documents(
-        self,
-        query: str,
-        **kwargs
-    ) -> List[Document]:
+    def get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
         """
         Public method to get relevant documents.
 
@@ -408,20 +376,14 @@ class AvocadoDBRetriever(BaseRetriever):
         """
         return self._get_relevant_documents(query)
 
-    async def aget_relevant_documents(
-        self,
-        query: str,
-        **kwargs
-    ) -> List[Document]:
+    async def aget_relevant_documents(self, query: str, **kwargs) -> List[Document]:
         """
         Async public method to get relevant documents.
         """
         return await self._aget_relevant_documents(query)
 
     def invoke(
-        self,
-        input: str,
-        config: Optional[Dict[str, Any]] = None
+        self, input: str, config: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """
         Invoke the retriever with a query string.
@@ -431,9 +393,7 @@ class AvocadoDBRetriever(BaseRetriever):
         return self.get_relevant_documents(input)
 
     async def ainvoke(
-        self,
-        input: str,
-        config: Optional[Dict[str, Any]] = None
+        self, input: str, config: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """
         Async invoke the retriever with a query string.

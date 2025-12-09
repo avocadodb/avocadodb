@@ -311,6 +311,6 @@ MIT License - see [LICENSE](../../LICENSE)
 
 ## 🔗 Links
 
-- [GitHub](https://github.com/servesys-labs/avacadodb)
-- [Documentation](https://github.com/servesys-labs/avacadodb/tree/main/docs)
+- [GitHub](https://github.com/avocadodb/avocadodb)
+- [Documentation](https://github.com/avocadodb/avocadodb/tree/main/docs)
 - [Python SDK](../python)

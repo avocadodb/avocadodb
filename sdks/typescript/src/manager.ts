@@ -160,8 +160,8 @@ export class AvocadoDBManager {
 
     if (!this.binaryPath && this.autoStart) {
       console.warn('⚠️  AvocadoDB binary not found. Please install:');
-      console.warn('   git clone https://github.com/servesys-labs/avacadodb');
-      console.warn('   cd avacadodb && cargo build --release');
+      console.warn('   git clone https://github.com/avocadodb/avocadodb');
+      console.warn('   cd avocadodb && cargo build --release');
     }
   }
 

@@ -178,7 +178,7 @@ result = crew.kickoff()
 
 ### Core Client
 
-#### `AvocadoDB(url: str = "http://localhost:8080")`
+#### `AvocadoDB(url: str = "http://localhost:8765")`
 
 HTTP client for AvocadoDB server.
 
@@ -356,6 +356,6 @@ MIT License - see [LICENSE](../../LICENSE)
 
 ## 🔗 Links
 
-- [GitHub](https://github.com/servesys-labs/avacadodb)
-- [Documentation](https://github.com/servesys-labs/avacadodb/tree/main/docs)
-- [DeepAgents Integration](https://github.com/servesys-labs/deepagents-avocado)
+- [GitHub](https://github.com/avocadodb/avocadodb)
+- [Documentation](https://github.com/avocadodb/avocadodb/tree/main/docs)
+- [DeepAgents Integration](https://github.com/langchain-ai/deepagents)

@@ -119,7 +119,7 @@ class AvocadoDBManager:
                     [
                         "git",
                         "clone",
-                        "https://github.com/servesys-labs/avacadodb.git",
+                        "https://github.com/avocadodb/avocadodb.git",
                         str(repo_dir),
                     ],
                     check=True,
@@ -149,8 +149,8 @@ class AvocadoDBManager:
         except Exception as e:
             print(f"⚠️  Auto-install failed: {e}")
             print("   Please install manually:")
-            print("   git clone https://github.com/servesys-labs/avacadodb")
-            print("   cd avacadodb && cargo build --release")
+            print("   git clone https://github.com/avocadodb/avocadodb")
+            print("   cd avocadodb && cargo build --release")
 
         return None
 

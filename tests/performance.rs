@@ -35,7 +35,7 @@ async fn test_compilation_performance() {
         if i % 10 == 0 {
             // Only embed every 10th document to save API costs during testing
             let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
-            let embeddings = avocado_core::embedding::embed_batch(texts, None)
+            let embeddings = avocado_core::embedding::embed_batch(texts, None, None)
                 .await
                 .unwrap();
 

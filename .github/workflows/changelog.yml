@@ -1,0 +1,220 @@
+name: Generate Changelog
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version for changelog (e.g., 1.0.0)'
+        required: true
+        type: string
+      from_tag:
+        description: 'Start tag (leave empty for previous tag)'
+        required: false
+        type: string
+      to_tag:
+        description: 'End tag (leave empty for HEAD)'
+        required: false
+        type: string
+
+jobs:
+  generate-changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine tag range
+        id: tags
+        env:
+          VERSION: ${{ inputs.version }}
+          FROM_TAG: ${{ inputs.from_tag }}
+          TO_TAG: ${{ inputs.to_tag }}
+        run: |
+          # Determine TO tag
+          if [ -z "$TO_TAG" ]; then
+            TO="HEAD"
+            TO_TAG="v${VERSION}"
+          else
+            TO="$TO_TAG"
+          fi
+          echo "to=${TO}" >> $GITHUB_OUTPUT
+          echo "to_tag=${TO_TAG}" >> $GITHUB_OUTPUT
+
+          # Determine FROM tag
+          if [ -z "$FROM_TAG" ]; then
+            PREV=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$PREV" ]; then
+              FROM=""
+              echo "from=" >> $GITHUB_OUTPUT
+            else
+              FROM="${PREV}.."
+              echo "from=${PREV}" >> $GITHUB_OUTPUT
+            fi
+          else
+            FROM="${FROM_TAG}.."
+            echo "from=${FROM_TAG}" >> $GITHUB_OUTPUT
+          fi
+          echo "range=${FROM}${TO}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog content
+        id: changelog
+        env:
+          VERSION: ${{ inputs.version }}
+          RANGE: ${{ steps.tags.outputs.range }}
+          FROM_TAG: ${{ steps.tags.outputs.from }}
+          TO_TAG: ${{ steps.tags.outputs.to_tag }}
+        run: |
+          cat > /tmp/new_changelog.md << 'CHANGELOG_EOF'
+          ## [${{ inputs.version }}] - $(date +%Y-%m-%d)
+
+          CHANGELOG_EOF
+
+          # Features
+          echo "### Features" >> /tmp/new_changelog.md
+          FEATURES=$(git log ${RANGE} --oneline --no-merges --grep="feat:" --grep="feature:" -i | sed 's/^[a-f0-9]* /- /')
+          if [ -n "$FEATURES" ]; then
+            echo "$FEATURES" >> /tmp/new_changelog.md
+          else
+            echo "- No new features" >> /tmp/new_changelog.md
+          fi
+          echo "" >> /tmp/new_changelog.md
+
+          # Bug Fixes
+          echo "### Bug Fixes" >> /tmp/new_changelog.md
+          FIXES=$(git log ${RANGE} --oneline --no-merges --grep="fix:" --grep="bug:" -i | sed 's/^[a-f0-9]* /- /')
+          if [ -n "$FIXES" ]; then
+            echo "$FIXES" >> /tmp/new_changelog.md
+          else
+            echo "- No bug fixes" >> /tmp/new_changelog.md
+          fi
+          echo "" >> /tmp/new_changelog.md
+
+          # Performance Improvements
+          echo "### Performance Improvements" >> /tmp/new_changelog.md
+          PERF=$(git log ${RANGE} --oneline --no-merges --grep="perf:" -i | sed 's/^[a-f0-9]* /- /')
+          if [ -n "$PERF" ]; then
+            echo "$PERF" >> /tmp/new_changelog.md
+          else
+            echo "- No performance improvements" >> /tmp/new_changelog.md
+          fi
+          echo "" >> /tmp/new_changelog.md
+
+          # Documentation
+          echo "### Documentation" >> /tmp/new_changelog.md
+          DOCS=$(git log ${RANGE} --oneline --no-merges --grep="docs:" -i | sed 's/^[a-f0-9]* /- /')
+          if [ -n "$DOCS" ]; then
+            echo "$DOCS" >> /tmp/new_changelog.md
+          else
+            echo "- No documentation changes" >> /tmp/new_changelog.md
+          fi
+          echo "" >> /tmp/new_changelog.md
+
+          # Breaking Changes
+          echo "### BREAKING CHANGES" >> /tmp/new_changelog.md
+          BREAKING=$(git log ${RANGE} --oneline --no-merges --grep="BREAKING CHANGE" -i | sed 's/^[a-f0-9]* /- /')
+          if [ -n "$BREAKING" ]; then
+            echo "$BREAKING" >> /tmp/new_changelog.md
+          else
+            echo "- No breaking changes" >> /tmp/new_changelog.md
+          fi
+          echo "" >> /tmp/new_changelog.md
+
+          # Other Changes
+          echo "### Other Changes" >> /tmp/new_changelog.md
+          OTHER=$(git log ${RANGE} --oneline --no-merges --grep="chore:" --grep="refactor:" --grep="test:" -i | sed 's/^[a-f0-9]* /- /')
+          if [ -n "$OTHER" ]; then
+            echo "$OTHER" >> /tmp/new_changelog.md
+          else
+            echo "- No other changes" >> /tmp/new_changelog.md
+          fi
+          echo "" >> /tmp/new_changelog.md
+
+          cat /tmp/new_changelog.md
+
+      - name: Update CHANGELOG.md
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            # Prepend new changelog to existing file
+            cat /tmp/new_changelog.md CHANGELOG.md > /tmp/updated_changelog.md
+            mv /tmp/updated_changelog.md CHANGELOG.md
+          else
+            # Create new CHANGELOG.md with header
+            cat > CHANGELOG.md << 'HEADER_EOF'
+          # Changelog
+
+          All notable changes to this project will be documented in this file.
+
+          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+          HEADER_EOF
+            cat /tmp/new_changelog.md >> CHANGELOG.md
+          fi
+
+          cat CHANGELOG.md
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            docs: Update CHANGELOG for v${{ inputs.version }}
+
+            Generated changelog for version ${{ inputs.version }}
+
+            Generated with [Claude Code](https://claude.com/claude-code)
+
+            Co-Authored-By: Claude <noreply@anthropic.com>
+          branch: changelog-v${{ inputs.version }}
+          delete-branch: true
+          title: "Update CHANGELOG for v${{ inputs.version }}"
+          body: |
+            ## Changelog Update
+
+            This PR adds the changelog for version **v${{ inputs.version }}**.
+
+            ### Range
+            - From: ${{ steps.tags.outputs.from || 'beginning' }}
+            - To: ${{ steps.tags.outputs.to_tag }}
+
+            ### Changes Included
+            - Features
+            - Bug Fixes
+            - Performance Improvements
+            - Documentation
+            - Breaking Changes
+            - Other Changes
+
+            Please review and merge before creating the release.
+
+            ---
+
+            Generated with [Claude Code](https://claude.com/claude-code)
+
+            Co-Authored-By: Claude <noreply@anthropic.com>
+          labels: |
+            documentation
+            changelog
+            automated
+
+      - name: Summary
+        run: |
+          echo "## Changelog Generated Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Range:** ${{ steps.tags.outputs.range }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Preview" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/new_changelog.md >> $GITHUB_STEP_SUMMARY

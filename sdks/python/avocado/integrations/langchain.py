@@ -17,7 +17,7 @@ Example:
 """
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 from avocado.client import AvocadoDB
 from avocado.manager import get_manager
@@ -93,7 +93,7 @@ def avocado_compile_context(
     - NEVER show the raw JSON to the user - always provide a formatted response
 
     Setup:
-        With auto-start enabled (default), just run avacado-cli!
+        With auto-start enabled (default), just run avocado-cli!
 
         Or manually:
         1. Start AvocadoDB server: ./target/release/avocado-server (port 8765)
@@ -151,7 +151,7 @@ def avocado_compile_context(
                         should_ingest = True
                 
                 if should_ingest:
-                    print(f"🥑 Auto-ingesting repository (recursive, includes all directories)...")
+                    print("🥑 Auto-ingesting repository (recursive, includes all directories)...")
                     if artifacts_count > 0:
                         print(f"   Current artifacts: {artifacts_count} (completing ingestion)")
                     # Use CLI's recursive ingest - it will include .private and all subdirectories
@@ -166,7 +166,7 @@ def avocado_compile_context(
                         from avocado.ingest import AutoIngest
                         ingester = AutoIngest()
                         ingester.ingest_project(".", max_files=1000)  # Increased limit
-            except Exception as e:
+            except Exception:
                 # Stats might fail if DB doesn't exist yet, try to ingest anyway
                 # Database will be auto-created on first use
                 try:

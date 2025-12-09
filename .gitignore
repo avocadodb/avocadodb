@@ -118,6 +118,7 @@ credentials.json
 # Documentation builds
 docs/_build/
 docs/.doctrees/
+docs-archive/
 
 # Backup files
 *.bak

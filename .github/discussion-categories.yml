@@ -1,0 +1,38 @@
+# GitHub Discussions Categories Configuration
+# This file defines the categories available for GitHub Discussions
+
+categories:
+  - name: Announcements
+    emoji: "📢"
+    description: "Official announcements and updates from the AvocadoDB team"
+    is_answerable: false
+
+  - name: General
+    emoji: "💬"
+    description: "General discussion about AvocadoDB - architecture, design decisions, and community chat"
+    is_answerable: false
+
+  - name: Q&A
+    emoji: "🙋"
+    description: "Ask questions and get help from the community"
+    is_answerable: true
+
+  - name: Show and Tell
+    emoji: "🎨"
+    description: "Share what you've built with AvocadoDB - projects, integrations, and success stories"
+    is_answerable: false
+
+  - name: Ideas
+    emoji: "💡"
+    description: "Share and discuss ideas for new features, improvements, and enhancements"
+    is_answerable: false
+
+  - name: Performance
+    emoji: "⚡"
+    description: "Discuss performance optimization, benchmarks, and scalability"
+    is_answerable: true
+
+  - name: Integrations
+    emoji: "🔌"
+    description: "Discuss integrating AvocadoDB with other tools, frameworks, and platforms"
+    is_answerable: true

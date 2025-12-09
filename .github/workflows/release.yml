@@ -1,0 +1,305 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x86_64
+            ext: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos
+            arch: x86_64
+            ext: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos
+            arch: aarch64
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+            arch: x86_64
+            ext: zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }} --bin avocado
+
+      - name: Prepare package directory
+        shell: bash
+        run: |
+          PACKAGE_DIR="avocado-cli-${{ steps.version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}"
+          mkdir -p "${PACKAGE_DIR}"
+
+          # Copy binary
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            cp "target/${{ matrix.target }}/release/avocado.exe" "${PACKAGE_DIR}/"
+          else
+            cp "target/${{ matrix.target }}/release/avocado" "${PACKAGE_DIR}/"
+          fi
+
+          # Copy documentation
+          cp LICENSE "${PACKAGE_DIR}/"
+          cp README.md "${PACKAGE_DIR}/"
+
+          echo "PACKAGE_DIR=${PACKAGE_DIR}" >> $GITHUB_ENV
+
+      - name: Create archive (Unix)
+        if: matrix.platform != 'windows'
+        run: tar -czf "${{ env.PACKAGE_DIR }}.tar.gz" "${{ env.PACKAGE_DIR }}"
+
+      - name: Create archive (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path "${{ env.PACKAGE_DIR }}" -DestinationPath "${{ env.PACKAGE_DIR }}.zip"
+
+      - name: Generate checksum (Unix)
+        if: matrix.platform != 'windows'
+        run: |
+          sha256sum "${{ env.PACKAGE_DIR }}.tar.gz" > "${{ env.PACKAGE_DIR }}.tar.gz.sha256"
+
+      - name: Generate checksum (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Path "${{ env.PACKAGE_DIR }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ env.PACKAGE_DIR }}.zip" | Out-File -FilePath "${{ env.PACKAGE_DIR }}.zip.sha256" -Encoding ASCII
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_DIR }}
+          path: |
+            ${{ env.PACKAGE_DIR }}.${{ matrix.ext }}
+            ${{ env.PACKAGE_DIR }}.${{ matrix.ext }}.sha256
+          retention-days: 1
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+          # Check if pre-release
+          if [[ "$VERSION" =~ (alpha|beta|rc) ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release-assets/ \;
+          cd release-assets
+          sha256sum * > checksums.txt
+          ls -lh
+
+      - name: Generate release notes
+        id: release_notes
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}"^ 2>/dev/null || echo "")
+
+          # Generate release notes
+          if [ -z "$PREV_TAG" ]; then
+            echo "Initial release of AvocadoDB v${VERSION}" > release_notes.md
+          else
+            echo "## Changes since ${PREV_TAG}" > release_notes.md
+            echo "" >> release_notes.md
+
+            # Features
+            FEATURES=$(git log "${PREV_TAG}..${TAG}" --oneline --grep="feat:" --grep="feature:" -i)
+            if [ -n "$FEATURES" ]; then
+              echo "### Features" >> release_notes.md
+              echo "$FEATURES" | sed 's/^/- /' >> release_notes.md
+              echo "" >> release_notes.md
+            fi
+
+            # Bug fixes
+            FIXES=$(git log "${PREV_TAG}..${TAG}" --oneline --grep="fix:" --grep="bug:" -i)
+            if [ -n "$FIXES" ]; then
+              echo "### Bug Fixes" >> release_notes.md
+              echo "$FIXES" | sed 's/^/- /' >> release_notes.md
+              echo "" >> release_notes.md
+            fi
+
+            # Documentation
+            DOCS=$(git log "${PREV_TAG}..${TAG}" --oneline --grep="docs:" -i)
+            if [ -n "$DOCS" ]; then
+              echo "### Documentation" >> release_notes.md
+              echo "$DOCS" | sed 's/^/- /' >> release_notes.md
+              echo "" >> release_notes.md
+            fi
+
+            # All commits
+            echo "### All Commits" >> release_notes.md
+            git log "${PREV_TAG}..${TAG}" --oneline | sed 's/^/- /' >> release_notes.md
+          fi
+
+          # Add installation instructions
+          cat >> release_notes.md << 'NOTES_EOF'
+
+          ## Installation
+
+          Download the appropriate binary for your platform:
+
+          - **Linux (x86_64)**: `avocado-cli-${VERSION}-linux-x86_64.tar.gz`
+          - **macOS (Intel)**: `avocado-cli-${VERSION}-macos-x86_64.tar.gz`
+          - **macOS (Apple Silicon)**: `avocado-cli-${VERSION}-macos-aarch64.tar.gz`
+          - **Windows (x86_64)**: `avocado-cli-${VERSION}-windows-x86_64.zip`
+
+          Extract and add to your PATH:
+
+          ```bash
+          # Linux/macOS
+          tar -xzf avocado-cli-*.tar.gz
+          cd avocado-cli-*
+          sudo mv avocado /usr/local/bin/
+
+          # Windows
+          # Extract the zip file and add the directory to your PATH
+          ```
+
+          Verify checksums using the provided `.sha256` files:
+
+          ```bash
+          sha256sum -c avocado-cli-*.sha256
+          ```
+
+          ## Docker
+
+          ```bash
+          docker pull ghcr.io/avocadodb/avocadodb:${VERSION}
+          ```
+
+          ## Python Integrations
+
+          ```bash
+          pip install langchain-avocadodb==${VERSION}
+          pip install llama-index-avocadodb==${VERSION}
+          ```
+
+          ## TypeScript SDK
+
+          ```bash
+          npm install avocadodb@${VERSION}
+          ```
+
+          ---
+
+          Generated with [Claude Code](https://claude.com/claude-code)
+
+          Co-Authored-By: Claude <noreply@anthropic.com>
+          NOTES_EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: AvocadoDB v${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          files: release-assets/*
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## Release Created Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Pre-release:** ${{ steps.version.outputs.prerelease }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Release Assets" >> $GITHUB_STEP_SUMMARY
+          ls -lh release-assets/ >> $GITHUB_STEP_SUMMARY

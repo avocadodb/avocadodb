@@ -132,6 +132,111 @@ impl Default for CompilerConfig {
     }
 }
 
+/// A conversation session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    /// Unique identifier (UUID v4)
+    pub id: String,
+    /// Optional user identifier
+    pub user_id: Option<String>,
+    /// Optional session title
+    pub title: Option<String>,
+    /// Optional metadata (arbitrary JSON)
+    pub metadata: Option<serde_json::Value>,
+    /// When session was created
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// When session was last updated
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// When last message was added
+    pub last_message_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// A message in a conversation session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    /// Unique identifier (UUID v4)
+    pub id: String,
+    /// Session this message belongs to
+    pub session_id: String,
+    /// Message role: 'user', 'assistant', 'system', 'tool'
+    pub role: MessageRole,
+    /// Message content
+    pub content: String,
+    /// Optional metadata (tool calls, citations, etc.)
+    pub metadata: Option<serde_json::Value>,
+    /// Sequence number within session (0-indexed)
+    pub sequence_number: usize,
+    /// When message was created
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Role of a message in a conversation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageRole {
+    /// Message from the user
+    User,
+    /// Message from the AI assistant
+    Assistant,
+    /// System message (instructions, context)
+    System,
+    /// Message from a tool or function
+    Tool,
+}
+
+impl MessageRole {
+    /// Convert MessageRole to string for database storage
+    pub fn as_str(&self) -> &str {
+        match self {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+            MessageRole::Tool => "tool",
+        }
+    }
+
+    /// Parse MessageRole from string
+    pub fn from_str(s: &str) -> std::result::Result<Self, String> {
+        match s {
+            "user" => Ok(MessageRole::User),
+            "assistant" => Ok(MessageRole::Assistant),
+            "system" => Ok(MessageRole::System),
+            "tool" => Ok(MessageRole::Tool),
+            _ => Err(format!("Invalid message role: {}", s)),
+        }
+    }
+}
+
+/// Association between a session and a working set
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionWorkingSet {
+    /// Unique identifier (UUID v4)
+    pub id: String,
+    /// Session ID
+    pub session_id: String,
+    /// Optional message ID that triggered this compilation
+    pub message_id: Option<String>,
+    /// The working set (stored as JSON)
+    pub working_set: WorkingSet,
+    /// Query that generated this working set
+    pub query: String,
+    /// Configuration used for compilation
+    pub config: CompilerConfig,
+    /// When this was created
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Session with its messages (for retrieval)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionWithMessages {
+    /// The session
+    pub session: Session,
+    /// Messages in chronological order
+    pub messages: Vec<Message>,
+    /// Associated working sets
+    pub working_sets: Vec<SessionWorkingSet>,
+}
+
 /// Result type alias for AvocadoDB operations
 pub type Result<T> = std::result::Result<T, Error>;
 

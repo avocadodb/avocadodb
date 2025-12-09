@@ -1,0 +1,1064 @@
+openapi: 3.0.3
+info:
+  title: AvocadoDB API
+  version: 0.1.0
+  description: |
+    **The first deterministic context database for AI agents**
+
+    AvocadoDB is a span-based context compiler that replaces traditional vector databases'
+    chaotic "top-k" retrieval with deterministic, citation-backed context generation.
+
+    ## Key Features
+    - **100% Deterministic**: Same query → same context, every time
+    - **Citation-Backed**: Every span has exact line number citations
+    - **Token Efficient**: 95%+ budget utilization
+    - **Fast**: < 500ms for 8K token context
+    - **Session Management**: Multi-turn conversation tracking
+
+  contact:
+    name: AvocadoDB Team
+    url: https://github.com/avocadodb/avocadodb
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8765
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Server health and status endpoints
+  - name: Context
+    description: Context compilation and document ingestion
+  - name: Sessions
+    description: Session management for multi-turn conversations
+  - name: Statistics
+    description: Database statistics and metrics
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Check if the server is running and healthy
+      operationId: getHealth
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "ok"
+                service: "avocadodb-daemon"
+
+  /stats:
+    get:
+      summary: Get database statistics
+      description: Retrieve statistics about artifacts, spans, and tokens in the database
+      operationId: getStats
+      tags:
+        - Statistics
+      parameters:
+        - name: project
+          in: query
+          description: Project path (defaults to current directory)
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Database statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /compile:
+    post:
+      summary: Compile context for a query
+      description: |
+        Compile a deterministic context working set for a given query.
+
+        The compilation process:
+        1. Embeds the query
+        2. Performs hybrid search (semantic + lexical)
+        3. Applies MMR diversification
+        4. Packs spans within token budget
+        5. Returns deterministic, citation-backed context
+      operationId: compile
+      tags:
+        - Context
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompileRequest'
+            example:
+              query: "How does authentication work?"
+              token_budget: 8000
+              project: "./my-project"
+      responses:
+        '200':
+          description: Successfully compiled context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompileResponse'
+        '400':
+          description: Bad request (invalid parameters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ingest:
+    post:
+      summary: Ingest a single document
+      description: |
+        Ingest a document into the database.
+
+        The ingestion process:
+        1. Creates an artifact record
+        2. Extracts spans (20-50 lines)
+        3. Generates embeddings for each span
+        4. Stores in SQLite database
+        5. Invalidates vector index (rebuilt on next compile)
+      operationId: ingest
+      tags:
+        - Context
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestRequest'
+            example:
+              path: "docs/authentication.md"
+              content: "# Authentication\n\nOur system uses JWT tokens..."
+              project: "./my-project"
+              metadata:
+                author: "alice"
+                tags: ["auth", "security"]
+      responses:
+        '200':
+          description: Successfully ingested document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ingest/batch:
+    post:
+      summary: Ingest multiple documents
+      description: Batch ingest multiple documents in a single request
+      operationId: ingestBatch
+      tags:
+        - Context
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestBatchRequest'
+      responses:
+        '200':
+          description: Batch ingestion completed (may contain errors for individual documents)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestBatchResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /clear:
+    delete:
+      summary: Clear database
+      description: Delete all artifacts and spans from the database
+      operationId: clear
+      tags:
+        - Context
+      parameters:
+        - name: project
+          in: query
+          description: Project path (defaults to current directory)
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Database cleared successfully
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions:
+    post:
+      summary: Create a new session
+      description: Create a new conversation session for multi-turn interactions
+      operationId: createSession
+      tags:
+        - Sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+            example:
+              user_id: "alice"
+              title: "Project Q&A"
+              project: "./my-project"
+      responses:
+        '200':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: List sessions
+      description: List all sessions, optionally filtered by user
+      operationId: listSessions
+      tags:
+        - Sessions
+      parameters:
+        - name: project
+          in: query
+          description: Project path
+          required: false
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          description: Filter by user ID
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of sessions to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSessionsResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{id}:
+    get:
+      summary: Get session details
+      description: Get a specific session with all its messages
+      operationId: getSession
+      tags:
+        - Sessions
+      parameters:
+        - name: id
+          in: path
+          description: Session ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: project
+          in: query
+          description: Project path
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetSessionResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      summary: Delete session
+      description: Delete a session and all its messages
+      operationId: deleteSession
+      tags:
+        - Sessions
+      parameters:
+        - name: id
+          in: path
+          description: Session ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: project
+          in: query
+          description: Project path
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteSessionResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{id}/messages:
+    post:
+      summary: Add message to session
+      description: Add a new message to the session
+      operationId: addMessage
+      tags:
+        - Sessions
+      parameters:
+        - name: id
+          in: path
+          description: Session ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMessageRequest'
+            example:
+              role: "user"
+              content: "How does the compiler work?"
+              project: "./my-project"
+              metadata:
+                source: "web-ui"
+      responses:
+        '200':
+          description: Message added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddMessageResponse'
+        '400':
+          description: Bad request (invalid role)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{id}/compile:
+    post:
+      summary: Compile context for session query
+      description: |
+        Add a user message to the session and compile context for it.
+        This combines adding a message and compiling context in one operation.
+      operationId: sessionCompile
+      tags:
+        - Sessions
+      parameters:
+        - name: id
+          in: path
+          description: Session ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionCompileRequest'
+            example:
+              query: "How does the compiler work?"
+              token_budget: 8000
+              project: "./my-project"
+      responses:
+        '200':
+          description: Context compiled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionCompileResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{id}/history:
+    get:
+      summary: Get conversation history
+      description: Get formatted conversation history for the session
+      operationId: getSessionHistory
+      tags:
+        - Sessions
+      parameters:
+        - name: id
+          in: path
+          description: Session ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: project
+          in: query
+          description: Project path
+          required: false
+          schema:
+            type: string
+        - name: max_tokens
+          in: query
+          description: Maximum tokens to include in history
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Conversation history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationHistoryResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{id}/replay:
+    get:
+      summary: Replay session
+      description: |
+        Get a complete replay of the session showing all turns with their queries,
+        compiled working sets, and timestamps. Useful for debugging.
+      operationId: replaySession
+      tags:
+        - Sessions
+      parameters:
+        - name: id
+          in: path
+          description: Session ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: project
+          in: query
+          description: Project path
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session replay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionReplay'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - service
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+          description: Overall health status
+        service:
+          type: string
+          example: "avocadodb-daemon"
+          description: Service name
+        version:
+          type: string
+          example: "0.1.0"
+          description: Service version
+        uptime_seconds:
+          type: integer
+          description: Server uptime in seconds
+          example: 3600
+        database_status:
+          type: string
+          enum: [ok, error]
+          description: Database connection status
+        index_status:
+          type: string
+          enum: [ok, building, error]
+          description: Vector index status
+
+    StatsResponse:
+      type: object
+      required:
+        - artifacts_count
+        - spans_count
+        - total_tokens
+      properties:
+        artifacts_count:
+          type: integer
+          description: Number of ingested documents
+          example: 42
+        spans_count:
+          type: integer
+          description: Number of extracted spans
+          example: 387
+        total_tokens:
+          type: integer
+          description: Total tokens indexed
+          example: 125431
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Failed to compile context"
+        code:
+          type: string
+          description: Machine-readable error code
+          example: "COMPILATION_ERROR"
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+
+    CompilerConfig:
+      type: object
+      properties:
+        token_budget:
+          type: integer
+          minimum: 100
+          maximum: 100000
+          default: 8000
+          description: Maximum tokens to include in compiled context
+        semantic_weight:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          default: 0.7
+          description: Weight for semantic search (0.0-1.0)
+        lexical_weight:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          default: 0.3
+          description: Weight for lexical search (0.0-1.0)
+        mmr_lambda:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          default: 0.5
+          description: MMR diversity parameter (0.0=diverse, 1.0=relevant)
+        enable_mmr:
+          type: boolean
+          default: true
+          description: Enable Maximal Marginal Relevance diversification
+
+    CompileRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          description: The query to compile context for
+          example: "How does authentication work?"
+        token_budget:
+          type: integer
+          minimum: 100
+          maximum: 100000
+          default: 8000
+          description: Maximum tokens in working set
+        config:
+          $ref: '#/components/schemas/CompilerConfig'
+        project:
+          type: string
+          description: Project path (defaults to current directory)
+          example: "./my-project"
+
+    Span:
+      type: object
+      required:
+        - id
+        - artifact_id
+        - artifact_path
+        - start_line
+        - end_line
+        - text
+        - token_count
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique span identifier
+        artifact_id:
+          type: string
+          format: uuid
+          description: Parent artifact identifier
+        artifact_path:
+          type: string
+          description: File path of the artifact
+          example: "docs/authentication.md"
+        start_line:
+          type: integer
+          minimum: 1
+          description: Starting line number (1-indexed)
+        end_line:
+          type: integer
+          minimum: 1
+          description: Ending line number (inclusive)
+        text:
+          type: string
+          description: Span content
+        token_count:
+          type: integer
+          description: Number of tokens in the span
+        embedding_model:
+          type: string
+          description: Embedding model used
+          example: "text-embedding-3-small"
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Custom metadata
+        score:
+          type: number
+          format: float
+          description: Relevance score (if applicable)
+
+    Citation:
+      type: object
+      required:
+        - span_id
+        - artifact_id
+        - artifact_path
+        - start_line
+        - end_line
+        - score
+      properties:
+        span_id:
+          type: string
+          format: uuid
+        artifact_id:
+          type: string
+          format: uuid
+        artifact_path:
+          type: string
+          example: "src/auth.rs"
+        start_line:
+          type: integer
+        end_line:
+          type: integer
+        score:
+          type: number
+          format: float
+          description: Relevance score
+
+    WorkingSet:
+      type: object
+      required:
+        - text
+        - spans
+        - citations
+        - tokens_used
+        - query
+        - compilation_time_ms
+      properties:
+        text:
+          type: string
+          description: Compiled context text with citations
+        spans:
+          type: array
+          items:
+            $ref: '#/components/schemas/Span'
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Citation'
+        tokens_used:
+          type: integer
+          description: Total tokens in compiled context
+        query:
+          type: string
+          description: Original query
+        compilation_time_ms:
+          type: integer
+          description: Compilation time in milliseconds
+
+    CompileResponse:
+      type: object
+      required:
+        - working_set
+      properties:
+        working_set:
+          $ref: '#/components/schemas/WorkingSet'
+
+    IngestRequest:
+      type: object
+      required:
+        - path
+        - content
+      properties:
+        path:
+          type: string
+          description: File path for the document
+          example: "docs/api.md"
+        content:
+          type: string
+          description: Document content
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Custom metadata
+        project:
+          type: string
+          description: Project path
+
+    IngestResponse:
+      type: object
+      required:
+        - artifact_id
+        - spans_created
+        - tokens_indexed
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+          description: Created artifact ID
+        spans_created:
+          type: integer
+          description: Number of spans extracted
+        tokens_indexed:
+          type: integer
+          description: Total tokens indexed
+
+    IngestBatchRequest:
+      type: object
+      required:
+        - documents
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestRequest'
+          minItems: 1
+
+    IngestResult:
+      type: object
+      required:
+        - artifact_id
+        - spans_created
+        - status
+      properties:
+        artifact_id:
+          type: string
+          format: uuid
+        spans_created:
+          type: integer
+        status:
+          type: string
+          enum: [success, error]
+        error:
+          type: string
+          description: Error message (if status is error)
+
+    IngestBatchResponse:
+      type: object
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestResult'
+
+    Session:
+      type: object
+      required:
+        - id
+        - user_id
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      required:
+        - id
+        - session_id
+        - role
+        - content
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant, system, tool]
+        content:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+        title:
+          type: string
+        project:
+          type: string
+
+    CreateSessionResponse:
+      type: object
+      required:
+        - session
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+
+    ListSessionsResponse:
+      type: object
+      required:
+        - sessions
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Session'
+
+    GetSessionResponse:
+      type: object
+      required:
+        - session
+        - messages
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+
+    DeleteSessionResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+
+    AddMessageRequest:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system, tool]
+        content:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        project:
+          type: string
+
+    AddMessageResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          $ref: '#/components/schemas/Message'
+
+    SessionCompileRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+        token_budget:
+          type: integer
+          default: 8000
+        config:
+          $ref: '#/components/schemas/CompilerConfig'
+        project:
+          type: string
+
+    SessionCompileResponse:
+      type: object
+      required:
+        - message
+        - working_set
+      properties:
+        message:
+          $ref: '#/components/schemas/Message'
+        working_set:
+          $ref: '#/components/schemas/WorkingSet'
+
+    ConversationHistoryResponse:
+      type: object
+      required:
+        - history
+      properties:
+        history:
+          type: string
+          description: Formatted conversation history
+
+    SessionTurn:
+      type: object
+      required:
+        - message_id
+        - query
+        - working_set
+        - timestamp
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        query:
+          type: string
+        working_set:
+          $ref: '#/components/schemas/WorkingSet'
+        timestamp:
+          type: string
+          format: date-time
+
+    SessionReplay:
+      type: object
+      required:
+        - session_id
+        - turns
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        turns:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionTurn'

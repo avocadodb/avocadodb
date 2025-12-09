@@ -36,6 +36,9 @@ Example:
 # Core client
 from .client import AvocadoDB, WorkingSet, Citation, Span
 
+# Session management
+from .session import Session, SessionInfo, Message
+
 # Server lifecycle management
 from .manager import AvocadoDBManager, get_manager
 
@@ -53,9 +56,10 @@ try:
     from .llm import TinyLlamaHelper, generate_answer
     _llm_available = True
 except ImportError:
+    from typing import Any, cast
     _llm_available = False
-    TinyLlamaHelper = None
-    generate_answer = None
+    TinyLlamaHelper = cast(Any, None)
+    generate_answer = cast(Any, None)
 
 # Legacy compatibility
 from .deepagents_tool import avocado_compile_context as legacy_compile_context, compile_context
@@ -67,6 +71,10 @@ __all__ = [
     "WorkingSet",
     "Citation",
     "Span",
+    # Session management
+    "Session",
+    "SessionInfo",
+    "Message",
     # Server management
     "AvocadoDBManager",
     "get_manager",
