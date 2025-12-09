@@ -6,13 +6,18 @@ Get AvocadoDB running in 5 minutes or less.
 
 Choose the easiest method for you:
 
-### Option A: One-Line Install (Recommended)
+### Option A: Install from crates.io (Recommended)
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/avocadodb/avocadodb/main/install.sh | sh
+cargo install avocado-cli
 ```
 
-This installs the pre-built binary - no Rust needed!
+That's it! If you don't have Rust, install it first:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+cargo install avocado-cli
+```
 
 ### Option B: Docker
 
@@ -22,14 +27,7 @@ docker run -d -p 8765:8765 -v avocado-data:/data --name avocadodb avocadodb/avoc
 
 ### Option C: Build from Source
 
-Requires Rust toolchain:
-
 ```bash
-# Install Rust (if needed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-
-# Clone and build
 git clone https://github.com/avocadodb/avocadodb.git
 cd avocadodb
 cargo build --release
@@ -37,12 +35,11 @@ cargo build --release
 
 **Note**: AvocadoDB works completely offline with local embeddings - no API key required!
 
-**Expected time:** 2-3 minutes for first build
-
 ## Step 2: Initialize Database
 
 ```bash
-./target/release/avocado init
+avocado init
+# Or if built from source: avocado init
 ```
 
 **Output:**
@@ -85,7 +82,7 @@ to obtain new access tokens without re-authentication.
 EOF
 
 # Ingest it
-./target/release/avocado ingest test-doc.md
+avocado ingest test-doc.md
 ```
 
 **Output:**
@@ -102,7 +99,7 @@ Ingested 1 file → 1 span
 ## Step 4: Compile Context
 
 ```bash
-./target/release/avocado compile "How does authentication work?" --budget 8000
+avocado compile "How does authentication work?" --budget 8000
 ```
 
 **Output:**
@@ -145,8 +142,8 @@ Context hash: a8f3c2d1e9b7f6... (deterministic ✓)
 
 ```bash
 # Run the same query twice and compare hashes
-./target/release/avocado compile "authentication" | head -50 | sha256sum
-./target/release/avocado compile "authentication" | head -50 | sha256sum
+avocado compile "authentication" | head -50 | sha256sum
+avocado compile "authentication" | head -50 | sha256sum
 ```
 
 **Output:**
@@ -161,13 +158,13 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 ```bash
 # Ingest your own documentation
-./target/release/avocado ingest ./docs --recursive
+avocado ingest ./docs --recursive
 
 # Or your source code
-./target/release/avocado ingest ./src --recursive
+avocado ingest ./src --recursive
 
 # Check what was indexed
-./target/release/avocado stats
+avocado stats
 ```
 
 ## Next Steps
@@ -207,7 +204,7 @@ See the [Library Usage](README.md#library-usage-rust) section in the main README
 ### Run the HTTP Server
 
 ```bash
-./target/release/avocado-server
+avocado-server
 ```
 
 Then use the REST API:

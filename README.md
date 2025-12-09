@@ -60,15 +60,13 @@ See [EMBEDDING_PERFORMANCE.md](docs/EMBEDDING_PERFORMANCE.md) for detailed bench
 
 ## Quick Start
 
-### One-Line Install (Easiest)
-
-Install the CLI binary with a single command:
+### Install from crates.io (Easiest)
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/avocadodb/avocadodb/main/install.sh | sh
+cargo install avocado-cli
 ```
 
-This downloads and installs the latest pre-built binary for your platform (Linux/macOS). After installation, you can use `avocado` directly:
+That's it! Now you can use `avocado` directly:
 
 ```bash
 avocado --version
@@ -465,7 +463,7 @@ avocado ingest src/ --recursive --include "*.rs,*.md,*.toml"
 The ingestion process:
 1. Reads document content
 2. Extracts spans (20-50 lines with smart boundaries)
-3. Generates OpenAI embeddings for each span
+3. Generates embeddings for each span (local fastembed by default)
 4. Stores in SQLite database
 
 ### `avocado compile`
@@ -569,7 +567,7 @@ Use AvocadoDB as a library in your Rust projects:
 
 ```toml
 [dependencies]
-avocado-core = { path = "avocado-core" }
+avocado-core = "2.0"
 tokio = { version = "1.35", features = ["full"] }
 ```
 
