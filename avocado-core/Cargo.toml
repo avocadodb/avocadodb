@@ -12,6 +12,9 @@ categories.workspace = true
 description = "Core engine for AvocadoDB - deterministic context compilation for AI agents"
 readme = "../README.md"
 
+# Exclude cached model files from crates.io package
+exclude = [".fastembed_cache/", "*.onnx", "*.bin"]
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
