@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(name = "avocado")]
+#[command(version)]
 #[command(about = "AvocadoDB - Deterministic context compilation", long_about = None)]
 struct Cli {
     #[command(subcommand)]
