@@ -2,26 +2,40 @@
 
 Get AvocadoDB running in 5 minutes or less.
 
-## Prerequisites
+## Step 1: Install AvocadoDB
 
-- Rust toolchain (1.70+)
-- OpenAI API key
-- Some documents to index (markdown, text, code, etc.)
+Choose the easiest method for you:
 
-## Step 1: Install Rust (if needed)
+### Option A: One-Line Install (Recommended)
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
+curl -sSf https://raw.githubusercontent.com/avocadodb/avocadodb/main/install.sh | sh
 ```
 
-## Step 2: Clone and Build
+This installs the pre-built binary - no Rust needed!
+
+### Option B: Docker
 
 ```bash
-git clone https://github.com/yourusername/avocadodb.git
+docker run -d -p 8765:8765 -v avocado-data:/data --name avocadodb avocadodb/avocadodb:latest
+```
+
+### Option C: Build from Source
+
+Requires Rust toolchain:
+
+```bash
+# Install Rust (if needed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Clone and build
+git clone https://github.com/avocadodb/avocadodb.git
 cd avocadodb
 cargo build --release
 ```
+
+**Note**: AvocadoDB works completely offline with local embeddings - no API key required!
 
 **Expected time:** 2-3 minutes for first build
 

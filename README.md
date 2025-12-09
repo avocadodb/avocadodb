@@ -60,9 +60,26 @@ See [EMBEDDING_PERFORMANCE.md](docs/EMBEDDING_PERFORMANCE.md) for detailed bench
 
 ## Quick Start
 
-### Docker (Recommended)
+### One-Line Install (Easiest)
 
-The fastest way to get started:
+Install the CLI binary with a single command:
+
+```bash
+curl -sSf https://raw.githubusercontent.com/avocadodb/avocadodb/main/install.sh | sh
+```
+
+This downloads and installs the latest pre-built binary for your platform (Linux/macOS). After installation, you can use `avocado` directly:
+
+```bash
+avocado --version
+avocado init
+avocado ingest ./docs --recursive
+avocado compile "your query"
+```
+
+### Docker (Recommended for Server)
+
+Run the server with Docker:
 
 ```bash
 # Run with Docker
