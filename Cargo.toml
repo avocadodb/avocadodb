@@ -3,11 +3,15 @@ members = ["avocado-core", "avocado-cli", "avocado-server", "tests"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "2.0.0"
 authors = ["AvocadoDB Team"]
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/avocadodb/avocadodb"
+homepage = "https://github.com/avocadodb/avocadodb"
+documentation = "https://docs.rs/avocado-core"
+keywords = ["rag", "vector-database", "embeddings", "ai", "llm"]
+categories = ["database", "text-processing"]
 
 [workspace.dependencies]
 # Async runtime
@@ -21,7 +25,7 @@ serde_json = "1.0"
 rusqlite = { version = "0.30", features = ["bundled"] }
 
 # HTTP client & server
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 axum = "0.7"
 tower-http = { version = "0.5", features = ["cors", "trace", "limit"] }
 tower = "0.4"
@@ -46,4 +50,3 @@ tiktoken-rs = "0.5"
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }
-

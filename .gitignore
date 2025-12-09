@@ -48,6 +48,9 @@ yarn.lock
 .internal/
 .history/
 .cursor/
+.vision/
+.implementation/
+.factory/
 
 # IDEs and editors
 .vscode/
@@ -68,6 +71,9 @@ yarn.lock
 *.sqlite-wal
 *.db
 *.db-journal
+# Test artifacts (in-memory database index files)
+*:memory:*
+*.sqlite.idx/
 
 # Embedding model caches (large files, downloaded at runtime)
 .fastembed_cache/
@@ -84,6 +90,10 @@ nosetests.xml
 coverage.xml
 *.cover
 .pytest_cache/
+
+# Linter caches
+.ruff_cache/
+.mypy_cache/
 
 # Logs
 *.log

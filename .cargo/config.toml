@@ -1,0 +1,14 @@
+# Cargo configuration for AvocadoDB
+# This ensures builds work correctly regardless of conda environment
+
+[env]
+# Override conda compiler settings to use system compilers
+CC = { value = "cc", force = true }
+CXX = { value = "c++", force = true }
+CFLAGS = { value = "", force = true }
+CXXFLAGS = { value = "", force = true }
+LDFLAGS = { value = "", force = true }
+
+[build]
+# Use all available CPUs for parallel builds
+jobs = -1

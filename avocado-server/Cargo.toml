@@ -5,13 +5,18 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "HTTP server for AvocadoDB - deterministic context compilation for AI agents"
+readme = "../README.md"
 
 [[bin]]
 name = "avocado-server"
 path = "src/main.rs"
 
 [dependencies]
-avocado-core = { path = "../avocado-core" }
+avocado-core = { path = "../avocado-core", version = "2.0.0" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
@@ -28,5 +33,5 @@ utoipa = { version = "4.2", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "6.0", features = ["axum"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tempfile = "3.8"

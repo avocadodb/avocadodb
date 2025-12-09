@@ -2,6 +2,7 @@
 name = "avocado-tests"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [[test]]
 name = "correctness"
@@ -16,7 +17,7 @@ name = "performance"
 path = "performance.rs"
 
 [dependencies]
-avocado-core = { path = "../avocado-core" }
+avocado-core = { path = "../avocado-core", version = "2.0.0" }
 tokio = { workspace = true, features = ["full"] }
 uuid = { workspace = true }
 chrono = { workspace = true }

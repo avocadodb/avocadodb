@@ -39,15 +39,7 @@ cargo build --release
 
 **Expected time:** 2-3 minutes for first build
 
-## Step 3: Set API Key
-
-```bash
-export OPENAI_API_KEY="sk-your-key-here"
-```
-
-**Tip:** Add this to your `~/.bashrc` or `~/.zshrc` to make it permanent.
-
-## Step 4: Initialize Database
+## Step 2: Initialize Database
 
 ```bash
 ./target/release/avocado init
@@ -60,7 +52,7 @@ Created database at .avocado/db.sqlite
 Ready to ingest documents!
 ```
 
-## Step 5: Ingest Documents
+## Step 3: Ingest Documents
 
 ```bash
 # Create a test document
@@ -99,7 +91,7 @@ EOF
 **Output:**
 ```
 Ingesting: test-doc.md
-Generating embeddings... (using OpenAI text-embedding-ada-002)
+Generating embeddings... (using local fastembed)
 ✓ Extracted 1 span
 ✓ Generated embeddings
 ✓ Stored in database
@@ -107,7 +99,7 @@ Generating embeddings... (using OpenAI text-embedding-ada-002)
 Ingested 1 file → 1 span
 ```
 
-## Step 6: Compile Context
+## Step 4: Compile Context
 
 ```bash
 ./target/release/avocado compile "How does authentication work?" --budget 8000
@@ -149,7 +141,7 @@ Compilation time: 245ms
 Context hash: a8f3c2d1e9b7f6... (deterministic ✓)
 ```
 
-## Step 7: Verify Determinism
+## Step 5: Verify Determinism
 
 ```bash
 # Run the same query twice and compare hashes
@@ -165,7 +157,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 **✅ Same hash every time!** This is the core guarantee of AvocadoDB.
 
-## Step 8: Ingest Real Documents
+## Step 6: Ingest Real Documents
 
 ```bash
 # Ingest your own documentation
@@ -245,16 +237,6 @@ If needed, update:
 rustup update
 ```
 
-### "OpenAI API Error: 401 Unauthorized"
-
-Check that your API key is set correctly:
-
-```bash
-echo $OPENAI_API_KEY
-```
-
-Make sure it starts with `sk-` and has no extra quotes or spaces.
-
 ### "No spans found for query"
 
 This usually means:
@@ -274,7 +256,7 @@ RUST_LOG=avocado_core=debug avocado ingest ./docs --recursive
 
 ### Compilation is slow (>1 second)
 
-This is usually due to OpenAI API latency. The embedding API call typically takes 200-300ms but can spike to 1000ms+ during high load.
+First-time embedding may be slow as the model is downloaded (~90MB). Subsequent runs should be fast (40-60ms).
 
 To diagnose:
 
@@ -284,12 +266,21 @@ RUST_LOG=avocado_core=debug avocado compile "your query"
 
 Look for the "Embed query" timing in the output.
 
+### Using OpenAI embeddings instead (optional)
+
+If you prefer OpenAI embeddings over local embeddings:
+
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+export AVOCADODB_EMBEDDING_PROVIDER=openai
+```
+
 ## Performance Tips
 
 1. **Batch ingest**: Ingest directories instead of individual files
 2. **Right-size budgets**: Don't use 100K tokens if you only need 8K
 3. **Cache results**: If using the same query repeatedly, cache the compiled context
-4. **Local development**: Consider Phase 2 local embeddings (no API calls)
+4. **Use local embeddings**: Default local embeddings are 6x faster than OpenAI API
 
 ## What's Next?
 
