@@ -51,9 +51,10 @@ docs/
 *.pem
 credentials.json
 
-# Test files
-tests/
-!tests/Cargo.toml
+# Test files (exclude test source files, but keep tests/Cargo.toml for build)
+tests/**/*.rs
+tests/**/*.ts
+tests/**/*.js
 *_test.rs
 *.test.ts
 *.test.js
