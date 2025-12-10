@@ -143,11 +143,44 @@ CREATE TABLE IF NOT EXISTS session_working_sets (
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
 );
 
+-- Agents table: stores registered agents for multi-agent orchestration
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,                      -- UUID v4
+    name TEXT NOT NULL,                       -- Human-readable name (e.g., "moderator")
+    role TEXT NOT NULL,                       -- Agent's role/persona description
+    model TEXT NOT NULL,                      -- LLM model identifier
+    system_prompt TEXT,                       -- Optional system prompt / personality
+    did TEXT,                                 -- Optional DID for decentralized identity
+    capabilities TEXT,                        -- JSON array of capabilities
+    metadata TEXT,                            -- JSON string with arbitrary metadata
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Agent relations table: tracks agreements/disagreements between agents
+CREATE TABLE IF NOT EXISTS agent_relations (
+    id TEXT PRIMARY KEY,                      -- UUID v4
+    session_id TEXT NOT NULL,                 -- Session where this occurred
+    message_id TEXT NOT NULL,                 -- Message that created this relation
+    from_agent_id TEXT NOT NULL,              -- Agent who expressed the stance
+    to_agent_id TEXT NOT NULL,                -- Agent being referenced
+    stance TEXT NOT NULL,                     -- 'agree', 'disagree', 'neutral', 'question'
+    target_message_id TEXT NOT NULL,          -- Message being referenced
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (from_agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+    FOREIGN KEY (to_agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, sequence_number);
 CREATE INDEX IF NOT EXISTS idx_working_sets_session ON session_working_sets(session_id);
+CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);
+CREATE INDEX IF NOT EXISTS idx_agent_relations_session ON agent_relations(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_relations_from ON agent_relations(from_agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id);
 "#;
         conn.execute_batch(schema_002)?;
 
@@ -1127,6 +1160,299 @@ CREATE INDEX IF NOT EXISTS idx_working_sets_session ON session_working_sets(sess
             messages,
             working_sets,
         }))
+    }
+
+    // ========== Multi-Agent Orchestration Operations ==========
+
+    /// Register an agent (works for 1 or many agents)
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - The agent to register
+    ///
+    /// # Returns
+    ///
+    /// The registered agent
+    pub fn register_agent(&self, agent: &crate::types::Agent) -> Result<crate::types::Agent> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO agents (id, name, role, model, system_prompt, did, capabilities, metadata, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                agent.id,
+                agent.name,
+                agent.role,
+                agent.model,
+                agent.system_prompt,
+                agent.did,
+                agent.capabilities.as_ref().map(|c| serde_json::to_string(c).ok()).flatten(),
+                agent.metadata.as_ref().map(|m| m.to_string()),
+                agent.created_at.to_rfc3339(),
+            ],
+        )?;
+
+        Ok(agent.clone())
+    }
+
+    /// Get an agent by ID
+    pub fn get_agent(&self, agent_id: &str) -> Result<Option<crate::types::Agent>> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, model, system_prompt, did, capabilities, metadata, created_at
+             FROM agents WHERE id = ?1"
+        )?;
+
+        let result = stmt.query_row(params![agent_id], |row| {
+            Ok(crate::types::Agent {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                role: row.get(2)?,
+                model: row.get(3)?,
+                system_prompt: row.get(4)?,
+                did: row.get(5)?,
+                capabilities: row.get::<_, Option<String>>(6)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                metadata: row.get::<_, Option<String>>(7)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_at: row.get::<_, String>(8)?
+                    .parse()
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+        });
+
+        match result {
+            Ok(agent) => Ok(Some(agent)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get an agent by name within a session (looks up by session participants)
+    pub fn get_agent_by_name(&self, name: &str) -> Result<Option<crate::types::Agent>> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, model, system_prompt, did, capabilities, metadata, created_at
+             FROM agents WHERE name = ?1"
+        )?;
+
+        let result = stmt.query_row(params![name], |row| {
+            Ok(crate::types::Agent {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                role: row.get(2)?,
+                model: row.get(3)?,
+                system_prompt: row.get(4)?,
+                did: row.get(5)?,
+                capabilities: row.get::<_, Option<String>>(6)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                metadata: row.get::<_, Option<String>>(7)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_at: row.get::<_, String>(8)?
+                    .parse()
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+        });
+
+        match result {
+            Ok(agent) => Ok(Some(agent)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// List all registered agents
+    pub fn list_agents(&self) -> Result<Vec<crate::types::Agent>> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, model, system_prompt, did, capabilities, metadata, created_at
+             FROM agents ORDER BY created_at"
+        )?;
+
+        let agents = stmt.query_map([], |row| {
+            Ok(crate::types::Agent {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                role: row.get(2)?,
+                model: row.get(3)?,
+                system_prompt: row.get(4)?,
+                did: row.get(5)?,
+                capabilities: row.get::<_, Option<String>>(6)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                metadata: row.get::<_, Option<String>>(7)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_at: row.get::<_, String>(8)?
+                    .parse()
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(agents)
+    }
+
+    /// Add an agent relation (agreement, disagreement, etc.)
+    ///
+    /// Automatically resolves message IDs to agent IDs for proper tracking
+    pub fn add_agent_relation(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        from_agent_id: &str,
+        target_message_id: &str,
+        stance: crate::types::Stance,
+    ) -> Result<crate::types::AgentRelation> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        // Look up the target message to find its agent
+        let to_agent_id: String = conn.query_row(
+            "SELECT json_extract(metadata, '$.agent_id') FROM messages WHERE id = ?1",
+            params![target_message_id],
+            |row| row.get(0),
+        ).unwrap_or_else(|_| "unknown".to_string());
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+
+        conn.execute(
+            "INSERT INTO agent_relations (id, session_id, message_id, from_agent_id, to_agent_id, stance, target_message_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                session_id,
+                message_id,
+                from_agent_id,
+                to_agent_id,
+                stance.as_str(),
+                target_message_id,
+                now.to_rfc3339(),
+            ],
+        )?;
+
+        Ok(crate::types::AgentRelation {
+            id,
+            session_id: session_id.to_string(),
+            message_id: message_id.to_string(),
+            from_agent_id: from_agent_id.to_string(),
+            to_agent_id,
+            stance,
+            target_message_id: target_message_id.to_string(),
+            created_at: now,
+        })
+    }
+
+    /// Get all agent relations for a session with resolved names
+    pub fn get_agent_relations(&self, session_id: &str) -> Result<crate::types::AgentRelationSummary> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT
+                ar.id, ar.message_id, ar.target_message_id, ar.stance,
+                fa.name as from_name, fa.model as from_model,
+                ta.name as to_name, ta.model as to_model
+             FROM agent_relations ar
+             LEFT JOIN agents fa ON ar.from_agent_id = fa.id
+             LEFT JOIN agents ta ON ar.to_agent_id = ta.id
+             WHERE ar.session_id = ?1
+             ORDER BY ar.created_at"
+        )?;
+
+        let mut agreements = Vec::new();
+        let mut disagreements = Vec::new();
+        let mut questions = Vec::new();
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(1)?,  // message_id
+                row.get::<_, String>(2)?,  // target_message_id
+                row.get::<_, String>(3)?,  // stance
+                row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "unknown".to_string()),  // from_name
+                row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "?".to_string()),        // from_model
+                row.get::<_, Option<String>>(6)?.unwrap_or_else(|| "unknown".to_string()),  // to_name
+                row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "?".to_string()),        // to_model
+            ))
+        })?;
+
+        for row in rows {
+            let (message_id, target_message_id, stance, from_name, from_model, to_name, to_model) = row?;
+            let entry = crate::types::AgentRelationEntry {
+                from_agent: from_name,
+                from_model,
+                to_agent: to_name,
+                to_model,
+                message_id,
+                target_message_id,
+            };
+
+            match stance.as_str() {
+                "agree" => agreements.push(entry),
+                "disagree" => disagreements.push(entry),
+                "question" => questions.push(entry),
+                _ => {} // neutral or unknown
+            }
+        }
+
+        Ok(crate::types::AgentRelationSummary {
+            agreements,
+            disagreements,
+            questions,
+        })
+    }
+
+    /// Get agents participating in a session (from their messages)
+    pub fn get_session_agents(&self, session_id: &str) -> Result<Vec<crate::types::Agent>> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT a.id, a.name, a.role, a.model, a.system_prompt, a.did, a.capabilities, a.metadata, a.created_at
+             FROM agents a
+             INNER JOIN messages m ON json_extract(m.metadata, '$.agent_id') = a.id
+             WHERE m.session_id = ?1
+             ORDER BY a.name"
+        )?;
+
+        let agents = stmt.query_map(params![session_id], |row| {
+            Ok(crate::types::Agent {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                role: row.get(2)?,
+                model: row.get(3)?,
+                system_prompt: row.get(4)?,
+                did: row.get(5)?,
+                capabilities: row.get::<_, Option<String>>(6)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                metadata: row.get::<_, Option<String>>(7)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_at: row.get::<_, String>(8)?
+                    .parse()
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(agents)
+    }
+
+    /// Convert this Database to a SqliteBackend for use with the StorageBackend trait
+    ///
+    /// This allows existing code using Database to interoperate with code
+    /// expecting a StorageBackend implementation.
+    ///
+    /// # Returns
+    ///
+    /// A SqliteBackend wrapping this database's path
+    pub async fn as_storage_backend(&self) -> Result<crate::storage::SqliteBackend> {
+        crate::storage::SqliteBackend::new(&self.db_path).await
     }
 }
 
