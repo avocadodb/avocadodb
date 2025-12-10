@@ -30,11 +30,19 @@ pub mod db;
 pub mod index;
 pub mod session;
 pub mod approx;
+pub mod eval;
+pub mod diff;
 
 // Re-export commonly used types
 pub use types::{
     Artifact, Citation, CompilerConfig, Error, Result, ScoredSpan, Span, WorkingSet,
     Session, Message, MessageRole, SessionWorkingSet,
+    // New types for enhanced determinism and explainability
+    Manifest, ChunkingParams, IndexParams,
+    ExplainPlan, ExplainCandidate, ExplainTiming, ExplainThresholds,
+    IngestAction,
+    GoldenQuery, EvalResult, EvalSummary,
+    WorkingSetDiff, DiffEntry, RerankEntry,
 };
 
 pub use session::{SessionManager, SessionReplay, SessionTurn};
@@ -60,6 +68,8 @@ mod tests {
             tokens_used: 3,
             query: "test".to_string(),
             compilation_time_ms: 100,
+            manifest: None,
+            explain: None,
         };
 
         let ws2 = WorkingSet {
@@ -69,6 +79,8 @@ mod tests {
             tokens_used: 3,
             query: "test".to_string(),
             compilation_time_ms: 200, // Different timing
+            manifest: None,
+            explain: None,
         };
 
         // Hash should be the same because it only depends on text

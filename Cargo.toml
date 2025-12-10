@@ -3,7 +3,7 @@ members = ["avocado-core", "avocado-cli", "avocado-server", "tests"]
 resolver = "2"
 
 [workspace.package]
-version = "2.0.0"
+version = "2.1.0"
 authors = ["AvocadoDB Team"]
 edition = "2021"
 license = "MIT"
@@ -50,3 +50,6 @@ tiktoken-rs = "0.5"
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }
+
+# Testing
+tempfile = "3.10"

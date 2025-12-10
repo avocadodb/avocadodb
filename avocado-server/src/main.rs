@@ -185,6 +185,9 @@ struct CompileRequest {
     /// Project path (directory containing .avocado/db.sqlite)
     /// If not provided, uses current working directory
     project: Option<String>,
+    /// Whether to include explain plan in response
+    #[serde(default)]
+    explain: bool,
 }
 
 fn default_token_budget() -> usize {
@@ -357,6 +360,10 @@ struct WorkingSetOut {
     tokens_used: usize,
     query: String,
     compilation_time_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest: Option<avocado_core::Manifest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explain: Option<avocado_core::ExplainPlan>,
 }
 
 fn enrich_working_set(
@@ -407,6 +414,8 @@ fn enrich_working_set(
         tokens_used: ws.tokens_used,
         query: ws.query.clone(),
         compilation_time_ms: ws.compilation_time_ms,
+        manifest: ws.manifest.clone(),
+        explain: ws.explain.clone(),
     }
 }
 
@@ -438,13 +447,14 @@ async fn compile_handler(
         ..Default::default()
     });
 
-    // Compile context using project's index
-    let working_set = compiler::compile(
+    // Compile context using project's index (with optional explain)
+    let working_set = compiler::compile_with_options(
         &req.query,
         config,
         &project_index.database,
         project_index.hnsw_index.as_ref(),
         None,
+        req.explain,
     )
     .await
     .map_err(|e| internal_error(e.to_string()))?;
@@ -468,12 +478,41 @@ async fn ingest_handler(
         .await
         .map_err(|e| internal_error(e.to_string()))?;
 
-    // Create artifact
-    let candidate_artifact_id = Uuid::new_v4().to_string();
+    // Calculate content hash
     let content_hash = format!("{:x}", sha2::Sha256::digest(req.content.as_bytes()));
 
+    // Determine action based on content hash comparison
+    let action = project_index
+        .database
+        .determine_ingest_action(&req.path, &content_hash)
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    match action {
+        avocado_core::IngestAction::Skip { artifact_id, .. } => {
+            // Content unchanged, return existing artifact with 0 new spans
+            return Ok(Json(IngestResponse {
+                artifact_id,
+                spans_created: 0,
+                tokens_indexed: 0,
+            }));
+        }
+        avocado_core::IngestAction::Update { artifact_id } => {
+            // Content changed, delete old spans and re-ingest
+            project_index
+                .database
+                .delete_artifact(&artifact_id)
+                .map_err(|e| internal_error(e.to_string()))?;
+            // Fall through to create new artifact
+        }
+        avocado_core::IngestAction::Create => {
+            // New document, proceed normally
+        }
+    }
+
+    // Create new artifact
+    let artifact_id = Uuid::new_v4().to_string();
     let artifact = Artifact {
-        id: candidate_artifact_id.clone(),
+        id: artifact_id.clone(),
         path: req.path.clone(),
         content: req.content.clone(),
         content_hash,
@@ -481,31 +520,11 @@ async fn ingest_handler(
         created_at: chrono::Utc::now(),
     };
 
-    // Try insert; if duplicate path, return existing artifact id and zero counts
-    if let Err(e) = project_index.database.insert_artifact(&artifact) {
-        let err_msg = e.to_string();
-        if err_msg.contains("UNIQUE constraint failed") {
-            // Duplicate path; fetch existing artifact id and return success with 0 new spans
-            match project_index.database.get_artifact_by_path(&req.path) {
-                Ok(Some(existing)) => {
-                    return Ok(Json(IngestResponse {
-                        artifact_id: existing.id,
-                        spans_created: 0,
-                        tokens_indexed: 0,
-                    }));
-                }
-                Ok(None) => {
-                    // Could not find existing; treat as internal error
-                    return Err(internal_error("Artifact exists but could not be retrieved".to_string()));
-                }
-                Err(e2) => {
-                    return Err(internal_error(format!("Failed to retrieve existing artifact: {}", e2)));
-                }
-            }
-        } else {
-            return Err(internal_error(err_msg));
-        }
-    }
+    // Insert artifact
+    project_index
+        .database
+        .insert_artifact(&artifact)
+        .map_err(|e| internal_error(e.to_string()))?;
 
     // Extract spans
     let mut spans = span::extract_spans(&req.content, &artifact.id)

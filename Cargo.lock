@@ -172,7 +172,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "avocado-cli"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "avocado-core",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "avocado-core"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "avocado-server"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "avocado-core",
@@ -241,11 +241,13 @@ dependencies = [
 
 [[package]]
 name = "avocado-tests"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "avocado-core",
  "chrono",
+ "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "uuid",
 ]

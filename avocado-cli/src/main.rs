@@ -72,6 +72,10 @@ enum Commands {
         #[arg(short, long)]
         json: bool,
 
+        /// Include explain plan showing retrieval decisions
+        #[arg(short, long)]
+        explain: bool,
+
         /// Database path (local mode only)
         #[arg(short, long, default_value = ".avocado/db.sqlite")]
         db_path: PathBuf,
@@ -360,6 +364,7 @@ async fn main() -> Result<()> {
             local,
             budget,
             json,
+            explain,
             db_path,
             backend,
         } => {
@@ -386,6 +391,7 @@ async fn main() -> Result<()> {
                         "token_budget": budget,
                         "project": project.to_string_lossy(),
                         "backend": backend,
+                        "explain": explain,
                     }))
                     .send()
                     .await?;
@@ -458,7 +464,7 @@ async fn main() -> Result<()> {
                 sp.set_message("Compiling context (embedding query + hybrid search)...");
             }
 
-            let working_set = compiler::compile(&query, config, &db, index.as_ref(), None).await?;
+            let working_set = compiler::compile_with_options(&query, config, &db, index.as_ref(), None, explain).await?;
 
             if let Some(sp) = spinner {
                 sp.finish_and_clear();

@@ -314,6 +314,97 @@ Query → Embed → [Semantic Search + Lexical Search] → Hybrid Fusion
 3. **Deterministic Ordering**: Results sorted by `(artifact_id, start_line)` for reproducibility
 4. **Greedy Token Packing**: Maximizes token budget utilization without duplicates
 
+## Explainability & Reproducibility (v2.1)
+
+**NEW in v2.1**: Enhanced determinism, explainability, and quality tracking features based on production feedback.
+
+### Version Manifest
+
+Every compilation now includes a version manifest for full reproducibility:
+
+```rust
+// Access manifest from WorkingSet
+let manifest = working_set.manifest.unwrap();
+println!("Avocado version: {}", manifest.avocado_version);
+println!("Embedding model: {}", manifest.embedding_model);
+println!("Context hash: {}", manifest.context_hash);
+```
+
+The manifest includes: avocado version, tokenizer, embedding model, embedding dimensions, chunking params, index params, and a SHA256 context hash.
+
+### Explain Plan
+
+Understand exactly how context was selected with explain mode:
+
+```bash
+# CLI with explain
+avocado compile "authentication" --explain
+
+# Shows candidates at each pipeline stage:
+# - Semantic search (top 50 from HNSW)
+# - Lexical search (keyword matches)
+# - Hybrid fusion (RRF combination)
+# - MMR diversification
+# - Token packing
+# - Final deterministic order
+```
+
+```python
+# Python SDK
+result = db.compile("auth", budget=8000, explain=True)
+if result.explain:
+    print(f"Semantic candidates: {len(result.explain.semantic_candidates)}")
+    print(f"Final spans: {len(result.explain.final_order)}")
+```
+
+### Working Set Diff
+
+Compare retrieval results across corpus versions for auditing:
+
+```rust
+use avocado_core::{diff_working_sets, summarize_diff};
+
+let diff = diff_working_sets(&before, &after);
+println!("{}", summarize_diff(&diff));
+// Output: "3 added, 1 removed, 2 reranked"
+```
+
+### Smart Incremental Rebuild
+
+Only re-embed changed files - unchanged content is automatically skipped:
+
+```bash
+# First ingest
+avocado ingest ./docs --recursive
+# Ingested 42 files → 387 spans
+
+# Re-ingest after editing 3 files
+avocado ingest ./docs --recursive
+# Skipped 39 unchanged, Updated 3 files → 28 spans
+```
+
+Content-hash comparison ensures minimal re-embedding while keeping the index fresh.
+
+### Evaluation Metrics
+
+Built-in support for golden set testing and quality metrics:
+
+```rust
+use avocado_core::{GoldenQuery, evaluate};
+
+let queries = vec![
+    GoldenQuery {
+        query: "authentication".to_string(),
+        expected_paths: vec!["docs/auth.md".to_string()],
+        k: 10,
+    },
+];
+
+let summary = evaluate(&queries, &db, &index, &config).await?;
+println!("Recall@10: {:.2}%", summary.mean_recall * 100.0);
+println!("MRR: {:.3}", summary.mean_mrr);
+```
+
 ## Session Management
 
 **NEW in v2.0**: Multi-turn conversation tracking with context compilation
@@ -477,6 +568,7 @@ avocado compile <query> [OPTIONS]
 **Options:**
 - `--budget <tokens>`: Token budget (default: 8000)
 - `--json`: Output as JSON instead of human-readable format
+- `--explain`: Show explain plan with candidates at each pipeline stage
 - `--mmr-lambda <0.0-1.0>`: MMR diversity parameter (default: 0.5)
   - Higher values (0.7-1.0) = more relevant but potentially redundant
   - Lower values (0.0-0.3) = more diverse but potentially less relevant
@@ -567,7 +659,7 @@ Use AvocadoDB as a library in your Rust projects:
 
 ```toml
 [dependencies]
-avocado-core = "2.0"
+avocado-core = "2.1"
 tokio = { version = "1.35", features = ["full"] }
 ```
 
@@ -671,6 +763,11 @@ cargo run --bin avocado-server
 - [x] Comprehensive documentation
 
 ### Phase 2 - Advanced Features
+- [x] Version manifest for full reproducibility
+- [x] Explain plan for retrieval debugging
+- [x] Working set diff for corpus auditing
+- [x] Smart incremental rebuild (content-hash based)
+- [x] Evaluation metrics (recall@k, MRR)
 - [ ] Multi-modal support (images, code)
 - [ ] Advanced retrieval (BM25, learned rankers)
 - [ ] PostgreSQL support

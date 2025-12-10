@@ -16,8 +16,15 @@
 use crate::db::Database;
 use crate::embedding;
 use crate::index::{cosine_similarity, VectorIndex};
-use crate::types::{Citation, CompilerConfig, Result, ScoredSpan, Span, WorkingSet};
+use crate::types::{
+    ChunkingParams, Citation, CompilerConfig, ExplainCandidate, ExplainPlan, ExplainThresholds,
+    ExplainTiming, IndexParams, Manifest, Result, ScoredSpan, Span, WorkingSet,
+};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+
+/// AvocadoDB version for manifest
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Compile a context working set for a query
 ///
@@ -39,74 +46,238 @@ pub async fn compile(
     index: &VectorIndex,
     api_key: Option<&str>,
 ) -> Result<WorkingSet> {
+    compile_with_options(query, config, db, index, api_key, false).await
+}
+
+/// Compile a context working set for a query with explain option
+///
+/// # Arguments
+///
+/// * `query` - The search query
+/// * `config` - Compiler configuration
+/// * `db` - Database handle
+/// * `index` - Vector index
+/// * `api_key` - Optional OpenAI API key
+/// * `explain` - Whether to generate explain plan
+///
+/// # Returns
+///
+/// A deterministic WorkingSet with compiled context, optionally with explain plan
+pub async fn compile_with_options(
+    query: &str,
+    config: CompilerConfig,
+    db: &Database,
+    index: &VectorIndex,
+    api_key: Option<&str>,
+    explain: bool,
+) -> Result<WorkingSet> {
     let start_time = std::time::Instant::now();
-    let mut last_checkpoint = start_time;
+    let mut timing = ExplainTiming::default();
 
     // Step 1: Embed query (uses local embeddings by default, no API key needed)
+    let t0 = std::time::Instant::now();
     let query_embedding = embedding::embed_text(query, None, api_key).await?;
-    log::debug!("Embed query: {}ms", last_checkpoint.elapsed().as_millis());
-    last_checkpoint = std::time::Instant::now();
+    timing.embed_query_ms = t0.elapsed().as_millis() as u64;
+    log::debug!("Embed query: {}ms", timing.embed_query_ms);
+
+    // Hash the query embedding for explain plan
+    let query_embedding_hash = if explain {
+        let mut hasher = Sha256::new();
+        for f in &query_embedding {
+            hasher.update(f.to_le_bytes());
+        }
+        format!("{:x}", hasher.finalize())
+    } else {
+        String::new()
+    };
 
     // Step 2: Semantic search
+    let t0 = std::time::Instant::now();
     let semantic_results = index.search(&query_embedding, 50)?;
-    log::debug!("Semantic search: {}ms", last_checkpoint.elapsed().as_millis());
-    last_checkpoint = std::time::Instant::now();
+    timing.semantic_search_ms = t0.elapsed().as_millis() as u64;
+    log::debug!("Semantic search: {}ms", timing.semantic_search_ms);
+
+    // Capture semantic candidates for explain
+    let semantic_candidates = if explain {
+        scored_spans_to_candidates(&semantic_results, db)
+    } else {
+        vec![]
+    };
 
     // Step 3: Lexical search
+    let t0 = std::time::Instant::now();
     let lexical_results = lexical_search(query, db, 20)?;
-    log::debug!("Lexical search: {}ms", last_checkpoint.elapsed().as_millis());
-    last_checkpoint = std::time::Instant::now();
+    timing.lexical_search_ms = t0.elapsed().as_millis() as u64;
+    log::debug!("Lexical search: {}ms", timing.lexical_search_ms);
+
+    // Capture lexical candidates for explain
+    let lexical_candidates = if explain {
+        scored_spans_to_candidates(&lexical_results, db)
+    } else {
+        vec![]
+    };
 
     // Step 4: Hybrid fusion
+    let t0 = std::time::Instant::now();
     let mut candidates = hybrid_fusion(
         semantic_results,
         lexical_results,
         config.semantic_weight,
         config.lexical_weight,
     );
-    log::debug!("Hybrid fusion: {}ms", last_checkpoint.elapsed().as_millis());
-    last_checkpoint = std::time::Instant::now();
+    timing.fusion_ms = t0.elapsed().as_millis() as u64;
+    log::debug!("Hybrid fusion: {}ms", timing.fusion_ms);
+
+    // Capture fused candidates for explain
+    let fused_candidates = if explain {
+        scored_spans_to_candidates(&candidates, db)
+    } else {
+        vec![]
+    };
 
     // Step 5: MMR diversification (if enabled)
+    let t0 = std::time::Instant::now();
     if config.enable_mmr {
         candidates = apply_mmr(candidates, &query_embedding, config.mmr_lambda);
-        log::debug!("MMR diversification: {}ms", last_checkpoint.elapsed().as_millis());
-        last_checkpoint = std::time::Instant::now();
     }
+    timing.mmr_ms = t0.elapsed().as_millis() as u64;
+    log::debug!("MMR diversification: {}ms", timing.mmr_ms);
+
+    // Capture MMR candidates for explain
+    let mmr_candidates = if explain {
+        scored_spans_to_candidates(&candidates, db)
+    } else {
+        vec![]
+    };
 
     // Step 6: Pack into token budget
+    let t0 = std::time::Instant::now();
     let selected_spans = pack_token_budget(candidates, config.token_budget);
-    log::debug!("Token packing: {}ms", last_checkpoint.elapsed().as_millis());
-    last_checkpoint = std::time::Instant::now();
+    timing.packing_ms = t0.elapsed().as_millis() as u64;
+    log::debug!("Token packing: {}ms", timing.packing_ms);
+
+    // Capture packed candidates for explain
+    let packed_candidates = if explain {
+        scored_spans_to_candidates(&selected_spans, db)
+    } else {
+        vec![]
+    };
 
     // Step 7: Sort deterministically (but keep scores for citations)
     let sorted_scored_spans = deterministic_sort_with_scores(selected_spans);
-    log::debug!("Deterministic sort: {}ms", last_checkpoint.elapsed().as_millis());
-    last_checkpoint = std::time::Instant::now();
+    log::debug!("Deterministic sort: complete");
+
+    // Capture final candidates for explain
+    let final_candidates = if explain {
+        scored_spans_to_candidates(&sorted_scored_spans, db)
+    } else {
+        vec![]
+    };
 
     // Step 8: Build context and citations (preserve scores)
+    let t0 = std::time::Instant::now();
     let (context_text, citations) = build_context(&sorted_scored_spans, db)?;
-    
+
     // Extract spans for WorkingSet (without scores)
     let sorted_spans: Vec<Span> = sorted_scored_spans.iter().map(|s| s.span.clone()).collect();
-    log::debug!("Build context: {}ms", last_checkpoint.elapsed().as_millis());
-    last_checkpoint = std::time::Instant::now();
+    timing.build_context_ms = t0.elapsed().as_millis() as u64;
+    log::debug!("Build context: {}ms", timing.build_context_ms);
 
     // Count tokens
     let tokens_used = count_tokens(&context_text);
-    log::debug!("Count tokens: {}ms", last_checkpoint.elapsed().as_millis());
 
     let compilation_time_ms = start_time.elapsed().as_millis() as u64;
+    timing.total_ms = compilation_time_ms;
     log::info!("Total compilation time: {}ms", compilation_time_ms);
 
+    // Generate manifest
+    let context_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(context_text.as_bytes());
+        format!("{:x}", hasher.finalize())
+    };
+
+    let embedding_model = sorted_spans
+        .first()
+        .and_then(|s| s.embedding_model.clone())
+        .unwrap_or_else(|| "all-MiniLM-L6-v2".to_string());
+
+    let embedding_dimension = sorted_spans
+        .first()
+        .and_then(|s| s.embedding.as_ref().map(|e| e.len()))
+        .unwrap_or(384);
+
+    let manifest = Manifest {
+        avocado_version: VERSION.to_string(),
+        tokenizer: "cl100k_base".to_string(),
+        embedding_model,
+        embedding_dimension,
+        chunking: ChunkingParams::default(),
+        index: IndexParams::default(),
+        context_hash,
+    };
+
+    // Generate explain plan if requested
+    let explain_plan = if explain {
+        Some(ExplainPlan {
+            query: query.to_string(),
+            query_embedding_hash,
+            semantic_candidates,
+            lexical_candidates,
+            fused_candidates,
+            mmr_candidates,
+            packed_candidates,
+            final_candidates,
+            timing,
+            thresholds: ExplainThresholds {
+                semantic_k: 50,
+                lexical_k: 20,
+                semantic_weight: config.semantic_weight,
+                lexical_weight: config.lexical_weight,
+                mmr_lambda: config.mmr_lambda,
+                mmr_enabled: config.enable_mmr,
+                token_budget: config.token_budget,
+            },
+        })
+    } else {
+        None
+    };
+
     Ok(WorkingSet {
-        text: context_text.clone(),
+        text: context_text,
         spans: sorted_spans,
         citations,
         tokens_used,
         query: query.to_string(),
         compilation_time_ms,
+        manifest: Some(manifest),
+        explain: explain_plan,
     })
+}
+
+/// Convert scored spans to explain candidates
+fn scored_spans_to_candidates(spans: &[ScoredSpan], db: &Database) -> Vec<ExplainCandidate> {
+    spans
+        .iter()
+        .enumerate()
+        .map(|(idx, scored)| {
+            let artifact_path = db
+                .get_artifact(&scored.span.artifact_id)
+                .ok()
+                .flatten()
+                .map(|a| a.path)
+                .unwrap_or_else(|| "unknown".to_string());
+
+            ExplainCandidate {
+                span_id: scored.span.id.clone(),
+                artifact_path,
+                lines: (scored.span.start_line, scored.span.end_line),
+                score: scored.score,
+                tokens: scored.span.token_count,
+                rank: idx + 1,
+            }
+        })
+        .collect()
 }
 
 /// Perform lexical (keyword) search

@@ -477,6 +477,75 @@ CREATE INDEX IF NOT EXISTS idx_working_sets_session ON session_working_sets(sess
         Ok(artifact)
     }
 
+    /// Determine what action to take when ingesting a document
+    ///
+    /// Compares content hash to detect if document needs update or can be skipped.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The document path
+    /// * `content_hash` - SHA256 hash of the new content
+    ///
+    /// # Returns
+    ///
+    /// - `IngestAction::Skip` if document exists with same content hash
+    /// - `IngestAction::Update` if document exists but content changed
+    /// - `IngestAction::Create` if document doesn't exist
+    pub fn determine_ingest_action(&self, path: &str, content_hash: &str) -> Result<crate::types::IngestAction> {
+        match self.get_artifact_by_path(path)? {
+            Some(existing) => {
+                if existing.content_hash == content_hash {
+                    Ok(crate::types::IngestAction::Skip {
+                        artifact_id: existing.id,
+                        reason: "Content unchanged (same hash)".to_string(),
+                    })
+                } else {
+                    Ok(crate::types::IngestAction::Update {
+                        artifact_id: existing.id,
+                    })
+                }
+            }
+            None => Ok(crate::types::IngestAction::Create),
+        }
+    }
+
+    /// Delete an artifact and its spans
+    ///
+    /// # Arguments
+    ///
+    /// * `artifact_id` - The artifact ID to delete
+    ///
+    /// # Returns
+    ///
+    /// Number of spans deleted
+    pub fn delete_artifact(&self, artifact_id: &str) -> Result<usize> {
+        let conn = self.conn.lock()
+            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+
+        // Delete spans first (FK constraint allows CASCADE but let's be explicit)
+        let spans_deleted = conn.execute(
+            "DELETE FROM spans WHERE artifact_id = ?1",
+            params![artifact_id],
+        )?;
+
+        // Delete artifact
+        conn.execute(
+            "DELETE FROM artifacts WHERE id = ?1",
+            params![artifact_id],
+        )?;
+
+        // Mark index as dirty
+        self.index_dirty.store(true, std::sync::atomic::Ordering::Release);
+
+        // Invalidate disk cache
+        let cache_dir = self.db_path.with_extension("sqlite.idx");
+        if cache_dir.exists() {
+            let _ = std::fs::remove_dir_all(&cache_dir);
+        }
+
+        Ok(spans_deleted)
+    }
+
     /// Search spans by text content (simple keyword matching)
     ///
     /// # Arguments
@@ -1035,6 +1104,8 @@ CREATE INDEX IF NOT EXISTS idx_working_sets_session ON session_working_sets(sess
                 tokens_used: 0,
                 query: row.get::<_, String>(4)?,
                 compilation_time_ms: 0,
+                manifest: None,
+                explain: None,
             };
 
             Ok(SessionWorkingSet {
@@ -1315,6 +1386,8 @@ mod tests {
             tokens_used: 100,
             query: "test query".to_string(),
             compilation_time_ms: 50,
+            manifest: None,
+            explain: None,
         };
 
         let config = CompilerConfig::default();
@@ -1351,6 +1424,8 @@ mod tests {
             tokens_used: 50,
             query: "test".to_string(),
             compilation_time_ms: 25,
+            manifest: None,
+            explain: None,
         };
 
         db.associate_working_set(

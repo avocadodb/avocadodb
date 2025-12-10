@@ -5,6 +5,93 @@ All notable changes to AvocadoDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-12-09
+
+### Added - Determinism & Explainability Features
+
+Based on feedback from production users running similar stacks with Qdrant and Tantivy, this release adds comprehensive tools for reproducibility, debugging, and quality tracking.
+
+#### Version Manifest
+- **Full reproducibility tracking**: Every compilation now includes a version manifest with:
+  - Avocado version, tokenizer version, embedding model and dimensions
+  - Chunking parameters (min/max/target lines)
+  - Index parameters (HNSW m, ef_construction, ef_search)
+  - SHA256 context hash for verification
+- Access via `working_set.manifest` field
+- Enables exact reproduction of any compilation
+
+#### Explain Plan
+- **Pipeline visibility**: Understand exactly how context was selected with `--explain` flag
+- Shows candidates at each pipeline stage:
+  - Semantic search candidates (top 50 from HNSW)
+  - Lexical search candidates (keyword matches)
+  - Hybrid fusion results (RRF combination)
+  - MMR diversification selections
+  - Token packing decisions
+  - Final deterministic order
+- Includes timing breakdown per stage
+- Access via `working_set.explain` field or `?explain=true` API param
+
+#### Working Set Diff
+- **Corpus change auditing**: Compare retrieval results across corpus versions
+- New `diff_working_sets()` function identifies:
+  - Added spans (new in results)
+  - Removed spans (no longer in results)
+  - Reranked spans (same span, different position/score)
+- `summarize_diff()` for human-readable summaries
+- `working_sets_identical()` for quick equality check
+
+#### Smart Incremental Rebuild
+- **Content-hash based skip**: Only re-embed files that actually changed
+- New `IngestAction` enum: `Skip`, `Update`, `Create`
+- `determine_ingest_action()` compares content hashes before re-embedding
+- `delete_artifact()` for clean updates when content changes
+- Dramatically reduces re-indexing time for large corpora
+
+#### Evaluation Metrics
+- **Golden set testing**: Built-in support for quality measurement
+- New types: `GoldenQuery`, `EvalResult`, `EvalSummary`
+- Metrics: recall@k, precision@k, mean reciprocal rank (MRR)
+- Latency tracking (p50, p99)
+- `evaluate()` function for programmatic quality testing
+
+#### New Types & API
+- `Manifest` - Version and parameter tracking
+- `ChunkingParams` - Span extraction settings
+- `IndexParams` - HNSW configuration
+- `ExplainPlan`, `ExplainCandidate`, `ExplainTiming`, `ExplainThresholds`
+- `IngestAction` - Skip/Update/Create decisions
+- `WorkingSetDiff`, `DiffEntry`, `RerankEntry`
+- `GoldenQuery`, `EvalResult`, `EvalSummary`
+
+#### CLI Enhancements
+- `--explain` flag for compile command
+- Explain output shows full pipeline breakdown
+
+### Changed
+
+- `compile()` now populates `manifest` field automatically
+- Server ingest endpoint uses smart rebuild logic
+- WorkingSet struct extended with `manifest` and `explain` optional fields
+
+### Testing
+
+- **20 new tests** in `tests/new_features.rs`:
+  - Manifest tests (3): inclusion, hash verification, determinism
+  - Explain tests (3): generation, disable, pipeline stages
+  - Incremental rebuild tests (4): create, skip, update, delete
+  - Evaluation tests (2): serialization
+  - Diff tests (5): identical, added, removed, reranked, summarize
+  - Integration tests (2): full pipeline, rebuild flow
+
+### Documentation
+
+- README updated with v2.1 features section
+- Code examples for all new features
+- Roadmap updated with completed Phase 2 items
+
+---
+
 ## [2.0.0] - 2025-11-17
 
 ### Added - Session Management (Phase 2.0)
@@ -189,6 +276,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned Features
 
+- [ ] Golden set CI quality gates
+- [ ] `/eval` and `/diff` HTTP endpoints
+- [ ] `avocado eval` and `avocado diff` CLI subcommands
 - [ ] Session analytics and reporting
 - [ ] Cross-session search
 - [ ] Session templates
@@ -203,10 +293,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **v2.1.0** (2025-12-09) - Determinism & Explainability Features
 - **v2.0.0** (2025-11-17) - Session Management
 - **v1.0.0** (2025-11-15) - Initial Release
 
 ## Upgrade Guide
+
+### From 2.0 to 2.1
+
+The v2.1 release is fully backward compatible. No code changes required.
+
+**New features available:**
+
+```rust
+// Version manifest (automatic)
+let result = compiler::compile("query", config, &db, &index, api_key).await?;
+if let Some(manifest) = &result.manifest {
+    println!("Context hash: {}", manifest.context_hash);
+}
+
+// Explain plan (opt-in)
+let result = compiler::compile_with_options("query", config, &db, &index, api_key, true).await?;
+if let Some(explain) = &result.explain {
+    println!("Pipeline stages: {} semantic, {} final",
+        explain.semantic_candidates.len(),
+        explain.final_order.len());
+}
+
+// Working set diff
+use avocado_core::{diff_working_sets, summarize_diff};
+let diff = diff_working_sets(&before, &after);
+println!("{}", summarize_diff(&diff));
+
+// Smart incremental rebuild (automatic in server)
+// Re-ingest automatically skips unchanged files
+```
 
 ### From 1.x to 2.0
 
