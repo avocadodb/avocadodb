@@ -1,8 +1,11 @@
 # Multi-stage Dockerfile for AvocadoDB
-# Single architecture build - multi-arch handled by separate platform builds
+# Multi-arch build with pre-downloaded ONNX Runtime (avoids OpenSSL cross-compile issues)
 
 # ===== Builder Stage =====
 FROM rust:1.83 AS builder
+
+# Detect target architecture
+ARG TARGETARCH
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -10,8 +13,23 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Use nightly toolchain to support crates using edition 2024 while keeping lockfile determinism
+# Use nightly toolchain to support crates using edition 2024
 RUN rustup toolchain install nightly --profile minimal && rustup default nightly
+
+# Pre-download ONNX Runtime to avoid TLS issues during build
+# ort-sys v2.0.0-rc.10 uses ONNX Runtime 1.22.0
+ARG ORT_VERSION=1.22.0
+ENV ORT_LIB_LOCATION=/opt/onnxruntime
+
+# Download ONNX Runtime based on target architecture
+RUN mkdir -p /opt/onnxruntime && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        echo "Downloading ONNX Runtime for aarch64..." && \
+        curl -sL "https://cdn.pyke.io/0/pyke:ort-rs/ms@${ORT_VERSION}/aarch64-unknown-linux-gnu.tgz" | tar -xz -C /opt/onnxruntime --strip-components=1; \
+    else \
+        echo "Downloading ONNX Runtime for x86_64..." && \
+        curl -sL "https://cdn.pyke.io/0/pyke:ort-rs/ms@${ORT_VERSION}/x86_64-unknown-linux-gnu.tgz" | tar -xz -C /opt/onnxruntime --strip-components=1; \
+    fi
 
 # Create app directory
 WORKDIR /build
@@ -33,7 +51,7 @@ RUN mkdir -p avocado-core/src avocado-server/src tests/src && \
     mkdir -p avocado-cli/benches && echo "fn main() {}" > avocado-cli/benches/embedding_bench.rs && \
     echo "pub fn dummy() {}" > tests/src/lib.rs
 
-# Build dependencies (cached layer)
+# Build dependencies (cached layer) - ORT_LIB_LOCATION tells ort-sys to use pre-downloaded binaries
 RUN cargo build --release --locked --manifest-path avocado-server/Cargo.toml --bin avocado-server
 
 # Remove dummy files and build artifacts
