@@ -1,8 +1,12 @@
 # AvocadoDB PostgreSQL Extension Builder
 # Builds the pgrx-based extension on pgvector/pgvector:pg16
+# Multi-arch support with pre-downloaded ONNX Runtime
 
 # Build stage
 FROM rust:1.83-bookworm AS builder
+
+# Detect target architecture
+ARG TARGETARCH
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -12,7 +16,23 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Pre-download ONNX Runtime to avoid TLS issues during build
+# ort-sys v2.0.0-rc.10 uses ONNX Runtime 1.22.0
+ARG ORT_VERSION=1.22.0
+ENV ORT_LIB_LOCATION=/opt/onnxruntime
+
+# Download ONNX Runtime based on target architecture
+RUN mkdir -p /opt/onnxruntime && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        echo "Downloading ONNX Runtime for aarch64..." && \
+        curl -sL "https://cdn.pyke.io/0/pyke:ort-rs/ms@${ORT_VERSION}/aarch64-unknown-linux-gnu.tgz" | tar -xz -C /opt/onnxruntime --strip-components=1; \
+    else \
+        echo "Downloading ONNX Runtime for x86_64..." && \
+        curl -sL "https://cdn.pyke.io/0/pyke:ort-rs/ms@${ORT_VERSION}/x86_64-unknown-linux-gnu.tgz" | tar -xz -C /opt/onnxruntime --strip-components=1; \
+    fi
 
 # Install cargo-pgrx
 RUN cargo install cargo-pgrx --version 0.12.9 --locked
