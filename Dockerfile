@@ -13,20 +13,19 @@ RUN apt-get update && apt-get install -y \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Use nightly toolchain first (required for cargo-zigbuild which uses edition 2024)
+RUN rustup toolchain install nightly --profile minimal && rustup default nightly
+
 # Install Zig (for cargo-zigbuild cross-compilation)
 ARG ZIG_VERSION=0.13.0
 RUN curl -L "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ -C /usr/local \
     && ln -s /usr/local/zig-linux-x86_64-${ZIG_VERSION}/zig /usr/local/bin/zig
 
-# Install cargo-zigbuild
+# Install cargo-zigbuild (requires nightly for edition 2024 deps)
 RUN cargo install cargo-zigbuild
 
 # Add Rust targets for cross-compilation
 RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
-
-# Use nightly toolchain to support crates using edition 2024
-RUN rustup toolchain install nightly --profile minimal && rustup default nightly
-RUN rustup target add --toolchain nightly x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
 
 # Create app directory
 WORKDIR /build
