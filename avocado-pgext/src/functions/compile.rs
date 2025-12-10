@@ -7,6 +7,7 @@
 use crate::embedding::embed_sync;
 use crate::error::AvocadoError;
 use crate::spi::{self, SpanWithScore};
+use pgrx::datum::JsonB;
 use pgrx::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

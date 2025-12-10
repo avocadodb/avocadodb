@@ -11,6 +11,7 @@
 //! Configure via PostgreSQL settings or environment variables.
 
 use crate::error::{AvocadoError, Result};
+use pgrx::datum::JsonB;
 use pgrx::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -116,7 +117,7 @@ mod fastembed_provider {
         let model_mutex = get_model()?;
         let texts_owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
 
-        let guard = model_mutex
+        let mut guard = model_mutex
             .lock()
             .map_err(|_| AvocadoError::Embedding("Fastembed model lock poisoned".to_string()))?;
 

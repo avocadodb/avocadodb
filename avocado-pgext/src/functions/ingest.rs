@@ -3,6 +3,7 @@
 use crate::embedding::{embed_batch_sync, model_name};
 use crate::error::AvocadoError;
 use crate::spi::{self, Artifact, Span};
+use pgrx::datum::JsonB;
 use pgrx::prelude::*;
 use sha2::{Digest, Sha256};
 

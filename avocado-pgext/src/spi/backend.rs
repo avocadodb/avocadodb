@@ -3,6 +3,7 @@
 //! Provides database operations using PostgreSQL's Server Programming Interface (SPI).
 
 use crate::error::{AvocadoError, Result};
+use pgrx::datum::JsonB;
 use pgrx::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -282,7 +283,7 @@ pub fn search_similar_spans(embedding: &[f32], limit: i32) -> Result<Vec<SpanWit
                     token_count: row.get_by_name("token_count")?,
                 },
                 artifact_path: row.get_by_name("artifact_path")?.unwrap_or_default(),
-                score: row.get_by_name::<f64>("score")?.unwrap_or(0.0),
+                score: row.get_by_name::<f64, &str>("score")?.unwrap_or(0.0),
             };
             spans.push(span);
         }
@@ -474,8 +475,8 @@ pub fn list_agents() -> Result<Vec<Agent>> {
                 role: row.get_by_name("role")?.unwrap_or_default(),
                 model: row.get_by_name("model")?.unwrap_or_default(),
                 system_prompt: row.get_by_name("system_prompt")?,
-                capabilities: row.get_by_name::<JsonB>("capabilities")?.map(|j| j.0),
-                metadata: row.get_by_name::<JsonB>("metadata")?.map(|j| j.0),
+                capabilities: row.get_by_name::<JsonB, &str>("capabilities")?.map(|j| j.0),
+                metadata: row.get_by_name::<JsonB, &str>("metadata")?.map(|j| j.0),
                 created_at: row.get_by_name("created_at")?.unwrap_or_else(chrono::Utc::now),
             };
             agents.push(agent);

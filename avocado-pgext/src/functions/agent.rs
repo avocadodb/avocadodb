@@ -5,6 +5,7 @@
 
 use crate::error::AvocadoError;
 use crate::spi;
+use pgrx::datum::JsonB;
 use pgrx::prelude::*;
 
 /// Register a new agent
@@ -216,17 +217,17 @@ fn get_relations_impl(session_id: &str) -> Result<serde_json::Value, AvocadoErro
         let mut neutrals = Vec::new();
 
         for row in relation_rows {
-            let stance: String = row.get_by_name("stance")?.unwrap_or_default();
+            let stance: String = row.get_by_name::<String, &str>("stance")?.unwrap_or_default();
             let relation = serde_json::json!({
-                "id": row.get_by_name::<String>("id")?.unwrap_or_default(),
-                "message_id": row.get_by_name::<String>("message_id")?.unwrap_or_default(),
-                "target_message_id": row.get_by_name::<String>("target_message_id")?,
-                "from_agent_id": row.get_by_name::<String>("from_agent_id")?.unwrap_or_default(),
-                "from_name": row.get_by_name::<String>("from_name")?.unwrap_or_default(),
-                "from_model": row.get_by_name::<String>("from_model")?.unwrap_or_default(),
-                "to_agent_id": row.get_by_name::<String>("to_agent_id")?,
-                "to_name": row.get_by_name::<String>("to_name")?,
-                "to_model": row.get_by_name::<String>("to_model")?,
+                "id": row.get_by_name::<String, &str>("id")?.unwrap_or_default(),
+                "message_id": row.get_by_name::<String, &str>("message_id")?.unwrap_or_default(),
+                "target_message_id": row.get_by_name::<String, &str>("target_message_id")?,
+                "from_agent_id": row.get_by_name::<String, &str>("from_agent_id")?.unwrap_or_default(),
+                "from_name": row.get_by_name::<String, &str>("from_name")?.unwrap_or_default(),
+                "from_model": row.get_by_name::<String, &str>("from_model")?.unwrap_or_default(),
+                "to_agent_id": row.get_by_name::<String, &str>("to_agent_id")?,
+                "to_name": row.get_by_name::<String, &str>("to_name")?,
+                "to_model": row.get_by_name::<String, &str>("to_model")?,
             });
 
             match stance.as_str() {
@@ -250,10 +251,10 @@ fn get_relations_impl(session_id: &str) -> Result<serde_json::Value, AvocadoErro
         let mut agents = Vec::new();
         for row in agent_rows {
             agents.push(serde_json::json!({
-                "id": row.get_by_name::<String>("id")?.unwrap_or_default(),
-                "name": row.get_by_name::<String>("name")?.unwrap_or_default(),
-                "role": row.get_by_name::<String>("role")?.unwrap_or_default(),
-                "model": row.get_by_name::<String>("model")?.unwrap_or_default(),
+                "id": row.get_by_name::<String, &str>("id")?.unwrap_or_default(),
+                "name": row.get_by_name::<String, &str>("name")?.unwrap_or_default(),
+                "role": row.get_by_name::<String, &str>("role")?.unwrap_or_default(),
+                "model": row.get_by_name::<String, &str>("model")?.unwrap_or_default(),
             }));
         }
 

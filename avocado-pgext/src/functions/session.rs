@@ -5,6 +5,7 @@
 
 use crate::error::AvocadoError;
 use crate::spi;
+use pgrx::datum::JsonB;
 use pgrx::prelude::*;
 
 /// Create a new session
@@ -168,11 +169,11 @@ fn list_sessions_impl(
         let mut sessions = Vec::new();
         for row in table_result {
             let session = serde_json::json!({
-                "id": row.get_by_name::<String>("id")?.unwrap_or_default(),
-                "user_id": row.get_by_name::<String>("user_id")?,
-                "title": row.get_by_name::<String>("title")?,
-                "metadata": row.get_by_name::<JsonB>("metadata")?.map(|j| j.0),
-                "created_at": row.get_by_name::<chrono::DateTime<chrono::Utc>>("created_at")?
+                "id": row.get_by_name::<String, &str>("id")?.unwrap_or_default(),
+                "user_id": row.get_by_name::<String, &str>("user_id")?,
+                "title": row.get_by_name::<String, &str>("title")?,
+                "metadata": row.get_by_name::<JsonB, &str>("metadata")?.map(|j| j.0),
+                "created_at": row.get_by_name::<chrono::DateTime<chrono::Utc>, &str>("created_at")?
                     .map(|dt| dt.to_rfc3339()),
             });
             sessions.push(session);

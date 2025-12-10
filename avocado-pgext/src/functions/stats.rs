@@ -2,6 +2,7 @@
 
 use crate::error::AvocadoError;
 use crate::spi;
+use pgrx::datum::JsonB;
 use pgrx::prelude::*;
 
 /// Get database statistics
