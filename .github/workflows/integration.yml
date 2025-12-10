@@ -207,18 +207,18 @@ jobs:
 
       - name: Test CLI commands
         run: |
-          ./target/release/avocado-cli --version
-          ./target/release/avocado-cli --help
+          ./target/release/avocado --version
+          ./target/release/avocado --help
           echo "CLI basic commands work"
 
       - name: Test CLI ingest command
         run: |
           echo "Test document content" > test.txt
-          ./target/release/avocado-cli ingest test.txt --collection test-collection || echo "Ingest command tested"
+          ./target/release/avocado ingest test.txt || echo "Ingest command tested"
 
-      - name: Test CLI ask command
+      - name: Test CLI compile command
         run: |
-          ./target/release/avocado-cli ask "test query" --collection test-collection || echo "Ask command tested"
+          ./target/release/avocado compile "test query" || echo "Compile command tested"
 
       - name: Stop avocado-server
         if: always()
