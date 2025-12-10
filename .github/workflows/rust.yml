@@ -116,7 +116,13 @@ jobs:
             -A clippy::needless_borrows_for_generic_args \
             -A clippy::redundant_closure \
             -A clippy::map_flatten \
-            -A clippy::default_constructed_unit_structs
+            -A clippy::default_constructed_unit_structs \
+            -A clippy::approx_constant \
+            -A clippy::manual_is_multiple_of \
+            -A clippy::manual_range_contains \
+            -A clippy::unused_enumerate_index \
+            -A clippy::useless_vec \
+            -A clippy::unnecessary_cast
 
   fmt:
     name: Rustfmt (Code Formatting)

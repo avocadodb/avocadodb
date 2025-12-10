@@ -20,9 +20,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Test environment helper
+#[allow(dead_code)]
 struct TestEnv {
     _temp_dir: TempDir,
-    db_path: PathBuf,
+    _db_path: PathBuf,
     db: Database,
     session_manager: SessionManager,
     index: Arc<VectorIndex>,
@@ -38,7 +39,7 @@ impl TestEnv {
 
         Self {
             _temp_dir: temp_dir,
-            db_path,
+            _db_path: db_path,
             db,
             session_manager,
             index,
@@ -94,7 +95,7 @@ async fn test_full_session_workflow() {
     ingest_text(&env.db, "rust_intro.md", test_content).await;
 
     // Step 3: Add user message and compile context
-    let (msg1, ws1) = env
+    let (msg1, _ws1) = env
         .session_manager
         .add_user_message(
             &session.id,
@@ -125,7 +126,7 @@ async fn test_full_session_workflow() {
     assert_eq!(msg2.sequence_number, 1);
 
     // Step 5: Continue conversation
-    let (msg3, ws2) = env
+    let (msg3, _ws2) = env
         .session_manager
         .add_user_message(
             &session.id,

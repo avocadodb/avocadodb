@@ -1504,7 +1504,7 @@ mod tests {
 
     #[test]
     fn test_embedding_serialization() {
-        let original = vec![1.0, 2.5, -3.14, 0.0];
+        let original = vec![1.0, 2.5, -3.15, 0.0];
         let bytes = serialize_embedding(&original);
         let restored = deserialize_embedding(&bytes);
 

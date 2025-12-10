@@ -1,4 +1,4 @@
-use avocado_core::{embedding, span, ScoredSpan, Span};
+use avocado_core::{embedding, span, Span};
 use avocado_core::approx::{ApproxIndex, HnswBackend, InstantBackend};
 use serde_json::json;
 use sha2::{Sha256, Digest};
