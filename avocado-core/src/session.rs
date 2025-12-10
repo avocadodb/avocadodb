@@ -1,7 +1,9 @@
 //! High-level session management API
 //!
-//! This module provides the SessionManager - a high-level API for conversation
-//! management that integrates with the compiler and database layers.
+//! This module provides session management APIs for conversation handling:
+//!
+//! - `SessionManager` - Uses `Database` directly (existing API, backward compatible)
+//! - `SessionManagerGeneric<B>` - Uses `StorageBackend` trait (works with any backend)
 //!
 //! # Features
 //!
@@ -14,10 +16,12 @@
 use crate::compiler;
 use crate::db::Database;
 use crate::index::VectorIndex;
+use crate::storage::StorageBackend;
 use crate::types::{
     CompilerConfig, Message, MessageRole, Result, Session, WorkingSet,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// High-level session management
 pub struct SessionManager {
@@ -266,6 +270,314 @@ impl SessionManager {
         }
 
         Ok(SessionReplay { session, turns })
+    }
+}
+
+// ============================================================================
+// Generic Session Manager (backend-agnostic)
+// ============================================================================
+
+/// Backend-agnostic session manager
+///
+/// This is the generic version of `SessionManager` that works with any
+/// `StorageBackend` implementation (SQLite, PostgreSQL, etc.)
+///
+/// # Example
+///
+/// ```ignore
+/// use avocado_core::storage::SqliteBackend;
+/// use avocado_core::session::SessionManagerGeneric;
+///
+/// let backend = SqliteBackend::new("db.sqlite").await?;
+/// let manager = SessionManagerGeneric::new(backend);
+/// let session = manager.start_session(None).await?;
+/// ```
+pub struct SessionManagerGeneric<B: StorageBackend> {
+    backend: Arc<B>,
+}
+
+impl<B: StorageBackend> SessionManagerGeneric<B> {
+    /// Create a new SessionManagerGeneric
+    ///
+    /// # Arguments
+    ///
+    /// * `backend` - Storage backend implementation
+    ///
+    /// # Returns
+    ///
+    /// A new SessionManagerGeneric instance
+    pub fn new(backend: B) -> Self {
+        Self {
+            backend: Arc::new(backend),
+        }
+    }
+
+    /// Create from an Arc'd backend (for sharing)
+    pub fn from_arc(backend: Arc<B>) -> Self {
+        Self { backend }
+    }
+
+    /// Get a reference to the backend
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
+    /// Start a new session
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - Optional user identifier
+    ///
+    /// # Returns
+    ///
+    /// The newly created session
+    pub async fn start_session(&self, user_id: Option<&str>) -> Result<Session> {
+        self.backend.create_session(user_id, None).await
+    }
+
+    /// Add a user message and compile context
+    ///
+    /// This method:
+    /// 1. Adds the user message to the database
+    /// 2. Calls the compiler to generate a WorkingSet from the query
+    /// 3. Associates the WorkingSet with the session
+    /// 4. Returns both the Message and WorkingSet
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The session ID
+    /// * `query` - The user's query
+    /// * `config` - Compiler configuration
+    /// * `api_key` - Optional OpenAI API key (for embeddings)
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (Message, WorkingSet)
+    pub async fn add_user_message(
+        &self,
+        session_id: &str,
+        query: &str,
+        config: CompilerConfig,
+        api_key: Option<&str>,
+    ) -> Result<(Message, WorkingSet)> {
+        // Add the message to the database
+        let message = self
+            .backend
+            .add_message(session_id, MessageRole::User, query, None)
+            .await?;
+
+        // Compile the context using the backend
+        let working_set = compiler::compile_with_backend(
+            query,
+            config.clone(),
+            self.backend.as_ref(),
+            api_key,
+        )
+        .await?;
+
+        // Associate the working set with the session
+        self.backend
+            .associate_working_set(session_id, Some(&message.id), &working_set, query, &config)
+            .await?;
+
+        Ok((message, working_set))
+    }
+
+    /// Add a user message with explain option
+    pub async fn add_user_message_with_explain(
+        &self,
+        session_id: &str,
+        query: &str,
+        config: CompilerConfig,
+        api_key: Option<&str>,
+        explain: bool,
+    ) -> Result<(Message, WorkingSet)> {
+        let message = self
+            .backend
+            .add_message(session_id, MessageRole::User, query, None)
+            .await?;
+
+        let working_set = compiler::compile_with_backend_options(
+            query,
+            config.clone(),
+            self.backend.as_ref(),
+            api_key,
+            explain,
+        )
+        .await?;
+
+        self.backend
+            .associate_working_set(session_id, Some(&message.id), &working_set, query, &config)
+            .await?;
+
+        Ok((message, working_set))
+    }
+
+    /// Add an assistant response
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The session ID
+    /// * `content` - The assistant's response
+    /// * `metadata` - Optional metadata (e.g., model info, citations)
+    ///
+    /// # Returns
+    ///
+    /// The newly created message
+    pub async fn add_assistant_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<Message> {
+        self.backend
+            .add_message(session_id, MessageRole::Assistant, content, metadata)
+            .await
+    }
+
+    /// Get conversation history formatted for LLM consumption
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The session ID
+    /// * `max_tokens` - Optional token limit
+    ///
+    /// # Returns
+    ///
+    /// Formatted conversation history as a string
+    pub async fn get_conversation_history(
+        &self,
+        session_id: &str,
+        max_tokens: Option<usize>,
+    ) -> Result<String> {
+        let messages = self.backend.get_messages(session_id, None).await?;
+
+        if messages.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Format all messages
+        let formatted_messages: Vec<String> = messages
+            .iter()
+            .map(|msg| {
+                let role = match msg.role {
+                    MessageRole::User => "User",
+                    MessageRole::Assistant => "Assistant",
+                    MessageRole::System => "System",
+                    MessageRole::Tool => "Tool",
+                };
+                format!("{}: {}", role, msg.content)
+            })
+            .collect();
+
+        // If no token limit, return all messages
+        if max_tokens.is_none() {
+            return Ok(formatted_messages.join("\n\n"));
+        }
+
+        let max_tokens = max_tokens.unwrap();
+
+        // Apply token limiting - keep most recent messages
+        let mut selected_messages = Vec::new();
+        let mut total_tokens = 0;
+
+        for msg in formatted_messages.iter().rev() {
+            let msg_tokens = estimate_tokens(msg);
+
+            if total_tokens + msg_tokens <= max_tokens {
+                selected_messages.push(msg.clone());
+                total_tokens += msg_tokens;
+            } else {
+                break;
+            }
+        }
+
+        selected_messages.reverse();
+        Ok(selected_messages.join("\n\n"))
+    }
+
+    /// Replay a session for debugging
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The session ID
+    ///
+    /// # Returns
+    ///
+    /// SessionReplay with structured debug data
+    pub async fn replay_session(&self, session_id: &str) -> Result<SessionReplay> {
+        let session_data = self.backend.get_session_full(session_id).await?;
+
+        if session_data.is_none() {
+            return Err(crate::types::Error::NotFound(format!(
+                "Session not found: {}",
+                session_id
+            )));
+        }
+
+        let session_data = session_data.unwrap();
+        let session = session_data.session;
+        let messages = session_data.messages;
+        let working_sets = session_data.working_sets;
+
+        // Build a map of message_id -> working_set for quick lookup
+        let mut working_set_map = std::collections::HashMap::new();
+        for ws in working_sets {
+            if let Some(msg_id) = &ws.message_id {
+                working_set_map.insert(msg_id.clone(), ws.working_set);
+            }
+        }
+
+        // Group messages into turns
+        let mut turns = Vec::new();
+        let mut i = 0;
+
+        while i < messages.len() {
+            let msg = &messages[i];
+
+            if matches!(msg.role, MessageRole::User) {
+                let user_message = msg.clone();
+                let working_set = working_set_map.get(&user_message.id).cloned();
+
+                let assistant_message = if i + 1 < messages.len()
+                    && matches!(messages[i + 1].role, MessageRole::Assistant)
+                {
+                    i += 1;
+                    Some(messages[i].clone())
+                } else {
+                    None
+                };
+
+                turns.push(SessionTurn {
+                    user_message,
+                    working_set,
+                    assistant_message,
+                });
+            }
+
+            i += 1;
+        }
+
+        Ok(SessionReplay { session, turns })
+    }
+
+    /// Get session by ID
+    pub async fn get_session(&self, session_id: &str) -> Result<Option<Session>> {
+        self.backend.get_session(session_id).await
+    }
+
+    /// List sessions
+    pub async fn list_sessions(
+        &self,
+        user_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Session>> {
+        self.backend.list_sessions(user_id, limit).await
+    }
+
+    /// Delete a session
+    pub async fn delete_session(&self, session_id: &str) -> Result<()> {
+        self.backend.delete_session(session_id).await
     }
 }
 
