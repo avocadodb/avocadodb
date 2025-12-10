@@ -76,6 +76,10 @@ enum Commands {
         #[arg(short, long)]
         explain: bool,
 
+        /// Show visual pipeline flow diagram
+        #[arg(short, long)]
+        visual: bool,
+
         /// Database path (local mode only)
         #[arg(short, long, default_value = ".avocado/db.sqlite")]
         db_path: PathBuf,
@@ -365,9 +369,12 @@ async fn main() -> Result<()> {
             budget,
             json,
             explain,
+            visual,
             db_path,
             backend,
         } => {
+            // Visual mode implies explain mode
+            let explain = explain || visual;
             if !json {
                 println!(
                     "{} Compiling context for: {}\n",
@@ -408,16 +415,21 @@ async fn main() -> Result<()> {
                 if json {
                     println!("{}", serde_json::to_string_pretty(&ws)?);
                 } else {
-                    // Print context text and brief stats
-                    if let Some(text) = ws.get("text").and_then(|x| x.as_str()) {
-                        println!("{}", text);
-                        println!("\n{}", style("─".repeat(60)).dim());
+                    // Visual pipeline mode
+                    if visual {
+                        print_visual_pipeline_json(&ws, &query, budget);
+                    } else {
+                        // Print context text and brief stats
+                        if let Some(text) = ws.get("text").and_then(|x| x.as_str()) {
+                            println!("{}", text);
+                            println!("\n{}", style("─".repeat(60)).dim());
+                        }
+                        let tokens = ws.get("tokens_used").and_then(|x| x.as_u64()).unwrap_or(0);
+                        let spans = ws.get("citations").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
+                        let utilization = if budget > 0 { ((tokens as f32 / budget as f32) * 100.0) as usize } else { 0 };
+                        println!("{}  {} / {} ({}%)", style("Tokens:   ").bold(), style(tokens).cyan().bold(), style(budget).dim(), utilization);
+                        println!("{}  {} spans", style("Compiled: ").bold(), style(spans).cyan().bold());
                     }
-                    let tokens = ws.get("tokens_used").and_then(|x| x.as_u64()).unwrap_or(0);
-                    let spans = ws.get("citations").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
-                    let utilization = if budget > 0 { ((tokens as f32 / budget as f32) * 100.0) as usize } else { 0 };
-                    println!("{}  {} / {} ({}%)", style("Tokens:   ").bold(), style(tokens).cyan().bold(), style(budget).dim(), utilization);
-                    println!("{}  {} spans", style("Compiled: ").bold(), style(spans).cyan().bold());
                 }
                 return Ok(());
             }
@@ -472,6 +484,9 @@ async fn main() -> Result<()> {
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&working_set)?);
+            } else if visual {
+                // Visual pipeline mode
+                print_visual_pipeline(&working_set, &query, budget);
             } else {
                 // Print context
                 println!("{}", working_set.text);
@@ -848,4 +863,355 @@ fn collect_files(dir: &PathBuf, recursive: bool) -> Result<Vec<PathBuf>> {
     }
 
     Ok(files)
+}
+
+/// Print visual pipeline flow diagram from WorkingSet
+fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usize) {
+    let explain = ws.explain.as_ref();
+    let manifest = ws.manifest.as_ref();
+
+    // Header
+    println!("\n{}", style("╔══════════════════════════════════════════════════════════════════════════════╗").cyan());
+    println!("{}", style("║                    🥑 AvocadoDB Visual Pipeline Inspector                     ║").cyan());
+    println!("{}", style("╚══════════════════════════════════════════════════════════════════════════════╝").cyan());
+
+    // Query info
+    println!("\n  {} {}", style("Query:").bold(), style(query).yellow());
+    if let Some(m) = manifest {
+        println!("  {} {}", style("Context Hash:").bold(), style(&m.context_hash[..24]).dim());
+    }
+    println!();
+
+    // Pipeline stages
+    let (sem_count, lex_count, fused_count, mmr_count, packed_count, final_count) = if let Some(e) = explain {
+        (
+            e.semantic_candidates.len(),
+            e.lexical_candidates.len(),
+            e.fused_candidates.len(),
+            e.mmr_candidates.len(),
+            e.packed_candidates.len(),
+            e.final_candidates.len(),
+        )
+    } else {
+        (0, 0, 0, 0, 0, ws.citations.len())
+    };
+
+    // Get timing info
+    let timing = explain.map(|e| &e.timing);
+
+    // Pipeline visualization
+    println!("  {}", style("┌─────────────────────────────────────────────────────────────────────────────┐").dim());
+    println!("  {}                              {} {}                                 {}",
+        style("│").dim(),
+        style("RETRIEVAL PIPELINE").bold().cyan(),
+        style("(deterministic)").dim(),
+        style("│").dim()
+    );
+    println!("  {}", style("└─────────────────────────────────────────────────────────────────────────────┘").dim());
+    println!();
+
+    // Stage boxes with flow arrows
+    let sem_time = timing.map(|t| t.semantic_search_ms).unwrap_or(0);
+    let lex_time = timing.map(|t| t.lexical_search_ms).unwrap_or(0);
+    let fusion_time = timing.map(|t| t.fusion_ms).unwrap_or(0);
+    let mmr_time = timing.map(|t| t.mmr_ms).unwrap_or(0);
+    let pack_time = timing.map(|t| t.packing_ms).unwrap_or(0);
+
+    // Row 1: Semantic and Lexical search
+    println!("  ┌──────────────────┐                    ┌──────────────────┐");
+    println!("  │   {} {}   │                    │   {} {}   │",
+        style("SEMANTIC").cyan().bold(),
+        style("🔍").dim(),
+        style("LEXICAL").magenta().bold(),
+        style("📝").dim()
+    );
+    println!("  │   {} {}  │                    │   {} {}  │",
+        style(format!("{:>4} candidates", sem_count)).white(),
+        style(format!("{}ms", sem_time)).dim(),
+        style(format!("{:>4} candidates", lex_count)).white(),
+        style(format!("{}ms", lex_time)).dim()
+    );
+    println!("  │   (HNSW top-50)    │                    │   (BM25 keyword)   │");
+    println!("  └────────┬─────────┘                    └─────────┬────────┘");
+    println!("           │                                        │");
+    println!("           └───────────────────┬────────────────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 2: Fusion
+    println!("                    ┌──────────────────────┐");
+    println!("                    │     {} {}      │",
+        style("RRF FUSION").yellow().bold(),
+        style("⚡").dim()
+    );
+    println!("                    │    {} {}   │",
+        style(format!("{:>4} combined", fused_count)).white(),
+        style(format!("{}ms", fusion_time)).dim()
+    );
+    println!("                    │  (reciprocal rank)   │");
+    println!("                    └──────────┬───────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 3: MMR
+    println!("                    ┌──────────────────────┐");
+    println!("                    │  {} {}   │",
+        style("MMR DIVERSITY").green().bold(),
+        style("🎯").dim()
+    );
+    println!("                    │    {} {}   │",
+        style(format!("{:>4} selected", mmr_count)).white(),
+        style(format!("{}ms", mmr_time)).dim()
+    );
+    println!("                    │   (λ=0.5 balance)    │");
+    println!("                    └──────────┬───────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 4: Packing
+    println!("                    ┌──────────────────────┐");
+    println!("                    │   {} {}    │",
+        style("TOKEN PACK").blue().bold(),
+        style("📦").dim()
+    );
+    println!("                    │     {} {}   │",
+        style(format!("{:>4} packed", packed_count)).white(),
+        style(format!("{}ms", pack_time)).dim()
+    );
+    println!("                    │   (budget: {})    │", budget);
+    println!("                    └──────────┬───────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 5: Final output
+    println!("                    ┌──────────────────────┐");
+    println!("                    │    {} {}    │",
+        style("FINAL ORDER").bold().white().on_green(),
+        style("✓").green()
+    );
+    println!("                    │     {} spans       │",
+        style(format!("{:>4}", final_count)).cyan().bold()
+    );
+    println!("                    │  (deterministic ✓)   │");
+    println!("                    └──────────────────────┘");
+    println!();
+
+    // Summary stats
+    let total_time = timing.map(|t| t.total_ms).unwrap_or(ws.compilation_time_ms);
+    let utilization = (ws.tokens_used as f32 / budget as f32 * 100.0) as usize;
+
+    println!("  {}", style("─".repeat(78)).dim());
+    println!();
+    println!("  {}   {} / {} tokens ({}% utilization)",
+        style("Budget:").bold(),
+        style(ws.tokens_used).cyan().bold(),
+        style(budget).dim(),
+        style(utilization).yellow()
+    );
+    println!("  {}     {}ms total {}",
+        style("Time:").bold(),
+        style(total_time).cyan().bold(),
+        if total_time < 500 { style("(fast ✓)").green() } else { style("(consider caching)").yellow() }
+    );
+    if let Some(m) = manifest {
+        println!("  {}  {} (same query → same results)",
+            style("Hash:").bold(),
+            style(&m.context_hash[..32]).dim()
+        );
+    }
+    println!();
+
+    // Top citations
+    if !ws.citations.is_empty() {
+        println!("  {} (top 5):", style("Citations").bold());
+        for (i, cite) in ws.citations.iter().take(5).enumerate() {
+            println!("    {}. {} {}",
+                style(i + 1).dim(),
+                style(&cite.artifact_path).cyan(),
+                style(format!(":{}–{}", cite.start_line, cite.end_line)).dim()
+            );
+        }
+        if ws.citations.len() > 5 {
+            println!("    {} more...", style(format!("... and {}", ws.citations.len() - 5)).dim());
+        }
+    }
+    println!();
+}
+
+/// Print visual pipeline from JSON (daemon mode)
+fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize) {
+    // Header
+    println!("\n{}", style("╔══════════════════════════════════════════════════════════════════════════════╗").cyan());
+    println!("{}", style("║                    🥑 AvocadoDB Visual Pipeline Inspector                     ║").cyan());
+    println!("{}", style("╚══════════════════════════════════════════════════════════════════════════════╝").cyan());
+
+    // Query info
+    println!("\n  {} {}", style("Query:").bold(), style(query).yellow());
+    if let Some(hash) = ws.get("manifest").and_then(|m| m.get("context_hash")).and_then(|h| h.as_str()) {
+        println!("  {} {}", style("Context Hash:").bold(), style(&hash[..hash.len().min(24)]).dim());
+    }
+    println!();
+
+    // Extract explain data
+    let explain = ws.get("explain");
+    let (sem_count, lex_count, fused_count, mmr_count, packed_count) = if let Some(e) = explain {
+        (
+            e.get("semantic_candidates").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
+            e.get("lexical_candidates").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
+            e.get("fused_candidates").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
+            e.get("mmr_selected").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
+            e.get("packed_spans").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
+        )
+    } else {
+        (0, 0, 0, 0, 0)
+    };
+
+    let final_count = ws.get("citations").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
+
+    // Timing
+    let timing = explain.and_then(|e| e.get("timing"));
+    let sem_time = timing.and_then(|t| t.get("semantic_search_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let lex_time = timing.and_then(|t| t.get("lexical_search_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let fusion_time = timing.and_then(|t| t.get("fusion_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let mmr_time = timing.and_then(|t| t.get("mmr_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let pack_time = timing.and_then(|t| t.get("packing_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let total_time = timing.and_then(|t| t.get("total_ms")).and_then(|v| v.as_u64())
+        .or_else(|| ws.get("compilation_time_ms").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+
+    // Pipeline visualization
+    println!("  {}", style("┌─────────────────────────────────────────────────────────────────────────────┐").dim());
+    println!("  {}                              {} {}                                 {}",
+        style("│").dim(),
+        style("RETRIEVAL PIPELINE").bold().cyan(),
+        style("(deterministic)").dim(),
+        style("│").dim()
+    );
+    println!("  {}", style("└─────────────────────────────────────────────────────────────────────────────┘").dim());
+    println!();
+
+    // Row 1: Semantic and Lexical search
+    println!("  ┌──────────────────┐                    ┌──────────────────┐");
+    println!("  │   {} {}   │                    │   {} {}   │",
+        style("SEMANTIC").cyan().bold(),
+        style("🔍").dim(),
+        style("LEXICAL").magenta().bold(),
+        style("📝").dim()
+    );
+    println!("  │   {} {}  │                    │   {} {}  │",
+        style(format!("{:>4} candidates", sem_count)).white(),
+        style(format!("{}ms", sem_time)).dim(),
+        style(format!("{:>4} candidates", lex_count)).white(),
+        style(format!("{}ms", lex_time)).dim()
+    );
+    println!("  │   (HNSW top-50)    │                    │   (BM25 keyword)   │");
+    println!("  └────────┬─────────┘                    └─────────┬────────┘");
+    println!("           │                                        │");
+    println!("           └───────────────────┬────────────────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 2: Fusion
+    println!("                    ┌──────────────────────┐");
+    println!("                    │     {} {}      │",
+        style("RRF FUSION").yellow().bold(),
+        style("⚡").dim()
+    );
+    println!("                    │    {} {}   │",
+        style(format!("{:>4} combined", fused_count)).white(),
+        style(format!("{}ms", fusion_time)).dim()
+    );
+    println!("                    │  (reciprocal rank)   │");
+    println!("                    └──────────┬───────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 3: MMR
+    println!("                    ┌──────────────────────┐");
+    println!("                    │  {} {}   │",
+        style("MMR DIVERSITY").green().bold(),
+        style("🎯").dim()
+    );
+    println!("                    │    {} {}   │",
+        style(format!("{:>4} selected", mmr_count)).white(),
+        style(format!("{}ms", mmr_time)).dim()
+    );
+    println!("                    │   (λ=0.5 balance)    │");
+    println!("                    └──────────┬───────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 4: Packing
+    println!("                    ┌──────────────────────┐");
+    println!("                    │   {} {}    │",
+        style("TOKEN PACK").blue().bold(),
+        style("📦").dim()
+    );
+    println!("                    │     {} {}   │",
+        style(format!("{:>4} packed", packed_count)).white(),
+        style(format!("{}ms", pack_time)).dim()
+    );
+    println!("                    │   (budget: {})    │", budget);
+    println!("                    └──────────┬───────────┘");
+    println!("                               │");
+    println!("                               ▼");
+
+    // Row 5: Final output
+    println!("                    ┌──────────────────────┐");
+    println!("                    │    {} {}    │",
+        style("FINAL ORDER").bold().white().on_green(),
+        style("✓").green()
+    );
+    println!("                    │     {} spans       │",
+        style(format!("{:>4}", final_count)).cyan().bold()
+    );
+    println!("                    │  (deterministic ✓)   │");
+    println!("                    └──────────────────────┘");
+    println!();
+
+    // Summary stats
+    let tokens_used = ws.get("tokens_used").and_then(|v| v.as_u64()).unwrap_or(0);
+    let utilization = if budget > 0 { (tokens_used as f32 / budget as f32 * 100.0) as usize } else { 0 };
+
+    println!("  {}", style("─".repeat(78)).dim());
+    println!();
+    println!("  {}   {} / {} tokens ({}% utilization)",
+        style("Budget:").bold(),
+        style(tokens_used).cyan().bold(),
+        style(budget).dim(),
+        style(utilization).yellow()
+    );
+    println!("  {}     {}ms total {}",
+        style("Time:").bold(),
+        style(total_time).cyan().bold(),
+        if total_time < 500 { style("(fast ✓)").green() } else { style("(consider caching)").yellow() }
+    );
+    if let Some(hash) = ws.get("manifest").and_then(|m| m.get("context_hash")).and_then(|h| h.as_str()) {
+        println!("  {}  {} (same query → same results)",
+            style("Hash:").bold(),
+            style(&hash[..hash.len().min(32)]).dim()
+        );
+    }
+    println!();
+
+    // Top citations
+    if let Some(citations) = ws.get("citations").and_then(|c| c.as_array()) {
+        if !citations.is_empty() {
+            println!("  {} (top 5):", style("Citations").bold());
+            for (i, cite) in citations.iter().take(5).enumerate() {
+                let path = cite.get("artifact_path").and_then(|p| p.as_str()).unwrap_or("?");
+                let start = cite.get("start_line").and_then(|l| l.as_u64()).unwrap_or(0);
+                let end = cite.get("end_line").and_then(|l| l.as_u64()).unwrap_or(0);
+                println!("    {}. {} {}",
+                    style(i + 1).dim(),
+                    style(path).cyan(),
+                    style(format!(":{}–{}", start, end)).dim()
+                );
+            }
+            if citations.len() > 5 {
+                println!("    {} more...", style(format!("... and {}", citations.len() - 5)).dim());
+            }
+        }
+    }
+    println!();
 }
