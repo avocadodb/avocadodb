@@ -338,21 +338,36 @@ async fn test_storage_config_from_env_sqlite_with_path() {
     std::env::remove_var("AVOCADO_BACKEND");
 }
 
+// PostgreSQL client-library was removed in favor of avocado-pgext extension
+// These tests verify that postgres:// URLs are still parsed but create_backend returns an error
+
 #[tokio::test]
-async fn test_storage_config_from_env_postgres() {
+async fn test_storage_config_from_env_postgres_returns_error() {
     std::env::set_var("AVOCADO_BACKEND", "postgres://user:pass@localhost/db");
     let config = StorageConfig::from_env("/default/path.db");
-    assert!(matches!(config, StorageConfig::Postgres { connection_string }
-        if connection_string == "postgres://user:pass@localhost/db"));
+    // Config is still parsed as Postgres
+    assert!(matches!(config, StorageConfig::Postgres { .. }));
+    // But creating a backend fails with helpful message
+    let result = create_backend(config).await;
+    match result {
+        Ok(_) => panic!("Expected error for postgres config"),
+        Err(e) => assert!(e.to_string().contains("avocado-pgext")),
+    }
     std::env::remove_var("AVOCADO_BACKEND");
 }
 
 #[tokio::test]
-async fn test_storage_config_from_env_postgresql() {
+async fn test_storage_config_from_env_postgresql_returns_error() {
     std::env::set_var("AVOCADO_BACKEND", "postgresql://user:pass@localhost/db");
     let config = StorageConfig::from_env("/default/path.db");
-    assert!(matches!(config, StorageConfig::Postgres { connection_string }
-        if connection_string == "postgresql://user:pass@localhost/db"));
+    // Config is still parsed as Postgres
+    assert!(matches!(config, StorageConfig::Postgres { .. }));
+    // But creating a backend fails with helpful message
+    let result = create_backend(config).await;
+    match result {
+        Ok(_) => panic!("Expected error for postgresql config"),
+        Err(e) => assert!(e.to_string().contains("avocado-pgext")),
+    }
     std::env::remove_var("AVOCADO_BACKEND");
 }
 
