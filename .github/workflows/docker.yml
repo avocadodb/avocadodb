@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: avocadodb/avocadodb
+  DOCKERHUB_IMAGE: avocadodb/avocadodb
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   build-and-test:
@@ -85,11 +85,19 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: docker.io/avocadodb/avocadodb
+          images: |
+            ${{ env.DOCKERHUB_IMAGE }}
+            ${{ env.GHCR_IMAGE }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
