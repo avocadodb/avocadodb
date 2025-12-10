@@ -64,7 +64,10 @@ async fn test_deterministic_compilation() {
     assert!(
         hashes.iter().all(|h| h == first_hash),
         "Results were not deterministic! Got {} unique hashes",
-        hashes.iter().collect::<std::collections::HashSet<_>>().len()
+        hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
     );
 
     println!("✅ Passed determinism test: 100 identical results");
@@ -86,7 +89,10 @@ async fn test_determinism_with_different_instances() {
 
     // Use deterministic artifact_id based on content hash for true determinism
     let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
-    let artifact_id = format!("{:x}", Sha256::digest(format!("artifact_{}", content_hash).as_bytes()));
+    let artifact_id = format!(
+        "{:x}",
+        Sha256::digest(format!("artifact_{}", content_hash).as_bytes())
+    );
 
     for _i in 0..3 {
         // Create fresh database
@@ -131,7 +137,10 @@ async fn test_determinism_with_different_instances() {
 
     // All should be identical
     assert_eq!(
-        hashes.iter().collect::<std::collections::HashSet<_>>().len(),
+        hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
         1,
         "Different database instances produced different results"
     );

@@ -8,8 +8,8 @@
 //! - Working Set Diff
 
 use avocado_core::{
-    compiler, db::Database, embedding, span,
-    CompilerConfig, EvalResult, EvalSummary, GoldenQuery, IngestAction, WorkingSet,
+    compiler, db::Database, embedding, span, CompilerConfig, EvalResult, EvalSummary, GoldenQuery,
+    IngestAction, WorkingSet,
 };
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -82,11 +82,23 @@ async fn test_manifest_included_in_working_set() {
     let manifest = working_set.manifest.unwrap();
 
     // Verify manifest fields
-    assert!(!manifest.avocado_version.is_empty(), "Version should be set");
+    assert!(
+        !manifest.avocado_version.is_empty(),
+        "Version should be set"
+    );
     assert_eq!(manifest.tokenizer, "cl100k_base");
-    assert!(!manifest.embedding_model.is_empty(), "Embedding model should be set");
-    assert!(manifest.embedding_dimension > 0, "Dimension should be positive");
-    assert!(!manifest.context_hash.is_empty(), "Context hash should be set");
+    assert!(
+        !manifest.embedding_model.is_empty(),
+        "Embedding model should be set"
+    );
+    assert!(
+        manifest.embedding_dimension > 0,
+        "Dimension should be positive"
+    );
+    assert!(
+        !manifest.context_hash.is_empty(),
+        "Context hash should be set"
+    );
 
     // Verify chunking params have defaults
     assert_eq!(manifest.chunking.min_lines, 20);
@@ -178,13 +190,19 @@ async fn test_explain_plan_generated() {
             .unwrap();
 
     // Verify explain plan is present
-    assert!(working_set.explain.is_some(), "Explain plan should be present");
+    assert!(
+        working_set.explain.is_some(),
+        "Explain plan should be present"
+    );
 
     let explain = working_set.explain.unwrap();
 
     // Verify explain plan fields
     assert_eq!(explain.query, "explain plan");
-    assert!(!explain.query_embedding_hash.is_empty(), "Query embedding hash should be set");
+    assert!(
+        !explain.query_embedding_hash.is_empty(),
+        "Query embedding hash should be set"
+    );
 
     // Verify timing was recorded
     assert!(explain.timing.total_ms > 0, "Total time should be recorded");
@@ -231,21 +249,23 @@ async fn test_explain_plan_shows_pipeline_stages() {
 
     // Create multiple documents for interesting pipeline behavior
     for i in 0..5 {
-        let content = format!(
-            "Document {} about search and retrieval algorithms.\n",
-            i
-        )
-        .repeat(30);
+        let content = format!("Document {} about search and retrieval algorithms.\n", i).repeat(30);
         ingest_test_document(&db, &format!("doc{}.md", i), &content).await;
     }
 
     let index = db.get_vector_index().unwrap();
     let config = CompilerConfig::default();
 
-    let working_set =
-        compiler::compile_with_options("search algorithms", config, &db, index.as_ref(), None, true)
-            .await
-            .unwrap();
+    let working_set = compiler::compile_with_options(
+        "search algorithms",
+        config,
+        &db,
+        index.as_ref(),
+        None,
+        true,
+    )
+    .await
+    .unwrap();
 
     let explain = working_set.explain.unwrap();
 
@@ -314,7 +334,10 @@ async fn test_determine_ingest_action_skip() {
         .unwrap();
 
     match action {
-        IngestAction::Skip { artifact_id, reason } => {
+        IngestAction::Skip {
+            artifact_id,
+            reason,
+        } => {
             assert_eq!(artifact_id, artifact.id);
             assert!(reason.contains("unchanged"));
             println!("✅ Skip action test passed");

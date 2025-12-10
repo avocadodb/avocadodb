@@ -1,4 +1,3 @@
-
 //! CLI command implementations
 
 pub mod benchmark;

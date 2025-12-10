@@ -3,8 +3,8 @@
 //! Tests for the StorageBackend trait implementations (SQLite and PostgreSQL).
 //! PostgreSQL tests are feature-gated and require a running PostgreSQL server.
 
-use avocado_core::storage::{SqliteBackend, StorageBackend, StorageConfig, create_backend};
-use avocado_core::types::{Artifact, Span, MessageRole, CompilerConfig, WorkingSet, Agent};
+use avocado_core::storage::{create_backend, SqliteBackend, StorageBackend, StorageConfig};
+use avocado_core::types::{Agent, Artifact, CompilerConfig, MessageRole, Span, WorkingSet};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -63,17 +63,26 @@ async fn test_sqlite_artifact_operations() {
     let artifact = create_test_artifact("art-1", "test/path.rs", "fn main() {}");
 
     // Insert artifact
-    backend.insert_artifact(&artifact).await.expect("Failed to insert artifact");
+    backend
+        .insert_artifact(&artifact)
+        .await
+        .expect("Failed to insert artifact");
 
     // Get artifact by ID
-    let retrieved = backend.get_artifact("art-1").await.expect("Failed to get artifact");
+    let retrieved = backend
+        .get_artifact("art-1")
+        .await
+        .expect("Failed to get artifact");
     assert!(retrieved.is_some());
     let retrieved = retrieved.unwrap();
     assert_eq!(retrieved.path, "test/path.rs");
     assert_eq!(retrieved.content, "fn main() {}");
 
     // Get artifact by path
-    let by_path = backend.get_artifact_by_path("test/path.rs").await.expect("Failed to get by path");
+    let by_path = backend
+        .get_artifact_by_path("test/path.rs")
+        .await
+        .expect("Failed to get by path");
     assert!(by_path.is_some());
     assert_eq!(by_path.unwrap().id, "art-1");
 
@@ -82,11 +91,17 @@ async fn test_sqlite_artifact_operations() {
     assert_eq!(artifacts, 1);
 
     // Delete artifact
-    let deleted_spans = backend.delete_artifact("art-1").await.expect("Failed to delete");
+    let deleted_spans = backend
+        .delete_artifact("art-1")
+        .await
+        .expect("Failed to delete");
     assert_eq!(deleted_spans, 0); // No spans were created
 
     // Verify deletion
-    let should_be_none = backend.get_artifact("art-1").await.expect("Failed to check deletion");
+    let should_be_none = backend
+        .get_artifact("art-1")
+        .await
+        .expect("Failed to check deletion");
     assert!(should_be_none.is_none());
 }
 
@@ -96,21 +111,33 @@ async fn test_sqlite_span_operations() {
 
     // First create an artifact
     let artifact = create_test_artifact("art-2", "test/code.rs", "line1\nline2\nline3");
-    backend.insert_artifact(&artifact).await.expect("Failed to insert artifact");
+    backend
+        .insert_artifact(&artifact)
+        .await
+        .expect("Failed to insert artifact");
 
     // Create and insert spans
     let spans = vec![
         create_test_span("art-2", 1, 2, "line1\nline2"),
         create_test_span("art-2", 3, 3, "line3"),
     ];
-    backend.insert_spans(&spans).await.expect("Failed to insert spans");
+    backend
+        .insert_spans(&spans)
+        .await
+        .expect("Failed to insert spans");
 
     // Get all spans
-    let all_spans = backend.get_all_spans().await.expect("Failed to get all spans");
+    let all_spans = backend
+        .get_all_spans()
+        .await
+        .expect("Failed to get all spans");
     assert_eq!(all_spans.len(), 2);
 
     // Search spans by text
-    let found = backend.search_spans("line2", 10).await.expect("Failed to search spans");
+    let found = backend
+        .search_spans("line2", 10)
+        .await
+        .expect("Failed to search spans");
     assert_eq!(found.len(), 1);
 
     // Verify stats
@@ -123,7 +150,8 @@ async fn test_sqlite_session_operations() {
     let (backend, _tmp_dir) = create_test_sqlite_backend().await;
 
     // Create session
-    let session = backend.create_session(Some("user-1"), Some("Test Session"))
+    let session = backend
+        .create_session(Some("user-1"), Some("Test Session"))
         .await
         .expect("Failed to create session");
 
@@ -132,27 +160,44 @@ async fn test_sqlite_session_operations() {
     assert_eq!(session.title, Some("Test Session".to_string()));
 
     // Get session
-    let retrieved = backend.get_session(&session.id).await.expect("Failed to get session");
+    let retrieved = backend
+        .get_session(&session.id)
+        .await
+        .expect("Failed to get session");
     assert!(retrieved.is_some());
     let retrieved = retrieved.unwrap();
     assert_eq!(retrieved.title, Some("Test Session".to_string()));
 
     // List sessions
-    let sessions = backend.list_sessions(Some("user-1"), None).await.expect("Failed to list sessions");
+    let sessions = backend
+        .list_sessions(Some("user-1"), None)
+        .await
+        .expect("Failed to list sessions");
     assert_eq!(sessions.len(), 1);
 
     // Update session
-    backend.update_session(&session.id, Some("Updated Title"), None)
+    backend
+        .update_session(&session.id, Some("Updated Title"), None)
         .await
         .expect("Failed to update session");
 
-    let updated = backend.get_session(&session.id).await.expect("Failed to get updated").unwrap();
+    let updated = backend
+        .get_session(&session.id)
+        .await
+        .expect("Failed to get updated")
+        .unwrap();
     assert_eq!(updated.title, Some("Updated Title".to_string()));
 
     // Delete session
-    backend.delete_session(&session.id).await.expect("Failed to delete session");
+    backend
+        .delete_session(&session.id)
+        .await
+        .expect("Failed to delete session");
 
-    let deleted = backend.get_session(&session.id).await.expect("Failed to check deletion");
+    let deleted = backend
+        .get_session(&session.id)
+        .await
+        .expect("Failed to check deletion");
     assert!(deleted.is_none());
 }
 
@@ -161,30 +206,39 @@ async fn test_sqlite_message_operations() {
     let (backend, _tmp_dir) = create_test_sqlite_backend().await;
 
     // Create session first
-    let session = backend.create_session(Some("user-2"), None)
+    let session = backend
+        .create_session(Some("user-2"), None)
         .await
         .expect("Failed to create session");
 
     // Add messages
-    let msg1 = backend.add_message(&session.id, MessageRole::User, "Hello", None)
+    let msg1 = backend
+        .add_message(&session.id, MessageRole::User, "Hello", None)
         .await
         .expect("Failed to add user message");
     assert_eq!(msg1.sequence_number, 0);
     assert_eq!(msg1.content, "Hello");
 
-    let msg2 = backend.add_message(&session.id, MessageRole::Assistant, "Hi there!", None)
+    let msg2 = backend
+        .add_message(&session.id, MessageRole::Assistant, "Hi there!", None)
         .await
         .expect("Failed to add assistant message");
     assert_eq!(msg2.sequence_number, 1);
 
     // Get messages
-    let messages = backend.get_messages(&session.id, None).await.expect("Failed to get messages");
+    let messages = backend
+        .get_messages(&session.id, None)
+        .await
+        .expect("Failed to get messages");
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].content, "Hello");
     assert_eq!(messages[1].content, "Hi there!");
 
     // Test limit
-    let limited = backend.get_messages(&session.id, Some(1)).await.expect("Failed to get limited");
+    let limited = backend
+        .get_messages(&session.id, Some(1))
+        .await
+        .expect("Failed to get limited");
     assert_eq!(limited.len(), 1);
 }
 
@@ -193,7 +247,10 @@ async fn test_sqlite_working_set_operations() {
     let (backend, _tmp_dir) = create_test_sqlite_backend().await;
 
     // Create session
-    let session = backend.create_session(None, None).await.expect("Failed to create session");
+    let session = backend
+        .create_session(None, None)
+        .await
+        .expect("Failed to create session");
 
     // Create a working set
     let working_set = WorkingSet {
@@ -210,19 +267,19 @@ async fn test_sqlite_working_set_operations() {
     let config = CompilerConfig::default();
 
     // Associate working set with session
-    let sws = backend.associate_working_set(
-        &session.id,
-        None,
-        &working_set,
-        "test query",
-        &config,
-    ).await.expect("Failed to associate working set");
+    let sws = backend
+        .associate_working_set(&session.id, None, &working_set, "test query", &config)
+        .await
+        .expect("Failed to associate working set");
 
     assert_eq!(sws.session_id, session.id);
     assert_eq!(sws.query, "test query");
 
     // Get full session
-    let full = backend.get_session_full(&session.id).await.expect("Failed to get full session");
+    let full = backend
+        .get_session_full(&session.id)
+        .await
+        .expect("Failed to get full session");
     assert!(full.is_some());
 }
 
@@ -243,16 +300,25 @@ async fn test_sqlite_agent_operations() {
         created_at: chrono::Utc::now(),
     };
 
-    let registered = backend.register_agent(&agent).await.expect("Failed to register agent");
+    let registered = backend
+        .register_agent(&agent)
+        .await
+        .expect("Failed to register agent");
     assert_eq!(registered.name, "test-agent");
 
     // Get agent by ID
-    let retrieved = backend.get_agent(&agent.id).await.expect("Failed to get agent");
+    let retrieved = backend
+        .get_agent(&agent.id)
+        .await
+        .expect("Failed to get agent");
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().role, "researcher");
 
     // Get agent by name
-    let by_name = backend.get_agent_by_name("test-agent").await.expect("Failed to get by name");
+    let by_name = backend
+        .get_agent_by_name("test-agent")
+        .await
+        .expect("Failed to get by name");
     assert!(by_name.is_some());
 
     // List agents
@@ -265,23 +331,29 @@ async fn test_sqlite_determine_ingest_action() {
     let (backend, _tmp_dir) = create_test_sqlite_backend().await;
 
     // For a new document, should return Create
-    let action = backend.determine_ingest_action("new/file.rs", "hash123")
+    let action = backend
+        .determine_ingest_action("new/file.rs", "hash123")
         .await
         .expect("Failed to determine action");
     assert!(matches!(action, avocado_core::IngestAction::Create));
 
     // Insert an artifact
     let artifact = create_test_artifact("art-3", "existing/file.rs", "content");
-    backend.insert_artifact(&artifact).await.expect("Failed to insert");
+    backend
+        .insert_artifact(&artifact)
+        .await
+        .expect("Failed to insert");
 
     // Same hash should Skip
-    let action = backend.determine_ingest_action("existing/file.rs", "hash_art-3")
+    let action = backend
+        .determine_ingest_action("existing/file.rs", "hash_art-3")
         .await
         .expect("Failed to determine action");
     assert!(matches!(action, avocado_core::IngestAction::Skip { .. }));
 
     // Different hash should Update
-    let action = backend.determine_ingest_action("existing/file.rs", "different_hash")
+    let action = backend
+        .determine_ingest_action("existing/file.rs", "different_hash")
         .await
         .expect("Failed to determine action");
     assert!(matches!(action, avocado_core::IngestAction::Update { .. }));
@@ -293,10 +365,16 @@ async fn test_sqlite_clear() {
 
     // Add some data
     let artifact = create_test_artifact("art-4", "test.rs", "content");
-    backend.insert_artifact(&artifact).await.expect("Failed to insert artifact");
+    backend
+        .insert_artifact(&artifact)
+        .await
+        .expect("Failed to insert artifact");
 
     let spans = vec![create_test_span("art-4", 1, 1, "content")];
-    backend.insert_spans(&spans).await.expect("Failed to insert spans");
+    backend
+        .insert_spans(&spans)
+        .await
+        .expect("Failed to insert spans");
 
     // Verify data exists
     let (artifacts, span_count, _) = backend.get_stats().await.expect("Failed to get stats");
@@ -307,7 +385,10 @@ async fn test_sqlite_clear() {
     backend.clear().await.expect("Failed to clear");
 
     // Verify everything is cleared
-    let (artifacts, span_count, _) = backend.get_stats().await.expect("Failed to get stats after clear");
+    let (artifacts, span_count, _) = backend
+        .get_stats()
+        .await
+        .expect("Failed to get stats after clear");
     assert_eq!(artifacts, 0);
     assert_eq!(span_count, 0);
 }
@@ -387,8 +468,12 @@ async fn test_create_backend_sqlite() {
     let tmp_dir = TempDir::new().expect("Failed to create temp dir");
     let db_path = tmp_dir.path().join("factory_test.db");
 
-    let config = StorageConfig::Sqlite { path: db_path.to_string_lossy().to_string() };
-    let backend = create_backend(config).await.expect("Failed to create backend");
+    let config = StorageConfig::Sqlite {
+        path: db_path.to_string_lossy().to_string(),
+    };
+    let backend = create_backend(config)
+        .await
+        .expect("Failed to create backend");
 
     // Verify it works
     let (artifacts, _, _) = backend.get_stats().await.expect("Failed to get stats");

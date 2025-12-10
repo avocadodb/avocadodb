@@ -63,18 +63,14 @@ fn bench_models(c: &mut Criterion) {
         // Set environment variable for model selection
         std::env::set_var("AVOCADODB_EMBEDDING_MODEL", model);
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(model),
-            model,
-            |b, _| {
-                b.iter(|| {
-                    rt.block_on(async {
-                        let result = embedding::embed_text(black_box(test_text), None, None).await;
-                        black_box(result)
-                    })
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(model), model, |b, _| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let result = embedding::embed_text(black_box(test_text), None, None).await;
+                    black_box(result)
+                })
+            });
+        });
     }
 
     // Reset to default

@@ -3,8 +3,8 @@
 //! Provides a unified interface for vector similarity search
 //! across different backends (HNSW for SQLite, pgvector for PostgreSQL).
 
-use async_trait::async_trait;
 use crate::types::{Result, ScoredSpan, Span};
+use async_trait::async_trait;
 
 /// Result from vector similarity search
 #[derive(Debug, Clone)]

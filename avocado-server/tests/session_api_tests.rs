@@ -105,7 +105,11 @@ async fn test_list_sessions() {
 
     // List all sessions
     let response = client
-        .get(&format!("{}/sessions?project={}", env.server_url, env.project_param()))
+        .get(&format!(
+            "{}/sessions?project={}",
+            env.server_url,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to send request");
@@ -118,7 +122,11 @@ async fn test_list_sessions() {
 
     // List sessions with limit
     let response = client
-        .get(&format!("{}/sessions?project={}&limit=2", env.server_url, env.project_param()))
+        .get(&format!(
+            "{}/sessions?project={}&limit=2",
+            env.server_url,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to send request");
@@ -128,7 +136,11 @@ async fn test_list_sessions() {
 
     // List sessions for specific user
     let response = client
-        .get(&format!("{}/sessions?project={}&user_id=user_1", env.server_url, env.project_param()))
+        .get(&format!(
+            "{}/sessions?project={}&user_id=user_1",
+            env.server_url,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to send request");
@@ -160,7 +172,12 @@ async fn test_get_session() {
 
     // Get the session
     let response = client
-        .get(&format!("{}/sessions/{}?project={}", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to get session");
@@ -174,7 +191,11 @@ async fn test_get_session() {
 
     // Test 404 for non-existent session
     let response = client
-        .get(&format!("{}/sessions/nonexistent?project={}", env.server_url, env.project_param()))
+        .get(&format!(
+            "{}/sessions/nonexistent?project={}",
+            env.server_url,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to send request");
@@ -203,7 +224,10 @@ async fn test_add_message() {
 
     // Add a user message
     let response = client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "user",
             "content": "Hello, world!",
@@ -223,7 +247,10 @@ async fn test_add_message() {
 
     // Add an assistant message
     let response = client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "assistant",
             "content": "Hi there!",
@@ -239,7 +266,10 @@ async fn test_add_message() {
 
     // Test invalid role
     let response = client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "invalid",
             "content": "Test",
@@ -285,7 +315,10 @@ async fn test_session_compile() {
 
     // Compile a query in the session
     let response = client
-        .post(&format!("{}/sessions/{}/compile", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/compile",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "query": "What is Rust?",
             "project": env.project_param()
@@ -343,7 +376,10 @@ async fn test_get_history() {
 
     // Add some messages
     client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "user",
             "content": "Hello",
@@ -354,7 +390,10 @@ async fn test_get_history() {
         .expect("Failed to add message");
 
     client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "assistant",
             "content": "Hi there!",
@@ -366,7 +405,12 @@ async fn test_get_history() {
 
     // Get conversation history
     let response = client
-        .get(&format!("{}/sessions/{}/history?project={}", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}/history?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to get history");
@@ -381,7 +425,12 @@ async fn test_get_history() {
 
     // Test with token limit
     let response = client
-        .get(&format!("{}/sessions/{}/history?project={}&max_tokens=10", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}/history?project={}&max_tokens=10",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to get history");
@@ -422,7 +471,10 @@ async fn test_session_replay() {
 
     // Create a conversation with compile
     client
-        .post(&format!("{}/sessions/{}/compile", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/compile",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "query": "First query",
             "project": env.project_param()
@@ -432,7 +484,10 @@ async fn test_session_replay() {
         .expect("Failed to compile");
 
     client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "assistant",
             "content": "First response",
@@ -444,7 +499,12 @@ async fn test_session_replay() {
 
     // Get replay
     let response = client
-        .get(&format!("{}/sessions/{}/replay?project={}", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}/replay?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to get replay");
@@ -484,7 +544,12 @@ async fn test_delete_session() {
 
     // Delete the session
     let response = client
-        .delete(&format!("{}/sessions/{}?project={}", env.server_url, session_id, env.project_param()))
+        .delete(&format!(
+            "{}/sessions/{}?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to delete session");
@@ -496,7 +561,12 @@ async fn test_delete_session() {
 
     // Verify session is gone
     let response = client
-        .get(&format!("{}/sessions/{}?project={}", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to send request");
@@ -542,7 +612,10 @@ async fn test_full_session_workflow() {
     // 3. Have a multi-turn conversation
     // Turn 1
     client
-        .post(&format!("{}/sessions/{}/compile", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/compile",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "query": "What is Rust?",
             "project": env.project_param()
@@ -552,7 +625,10 @@ async fn test_full_session_workflow() {
         .expect("Failed to compile");
 
     client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "assistant",
             "content": "Rust is a systems programming language.",
@@ -564,7 +640,10 @@ async fn test_full_session_workflow() {
 
     // Turn 2
     client
-        .post(&format!("{}/sessions/{}/compile", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/compile",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "query": "Tell me more",
             "project": env.project_param()
@@ -574,7 +653,10 @@ async fn test_full_session_workflow() {
         .expect("Failed to compile");
 
     client
-        .post(&format!("{}/sessions/{}/messages", env.server_url, session_id))
+        .post(&format!(
+            "{}/sessions/{}/messages",
+            env.server_url, session_id
+        ))
         .json(&json!({
             "role": "assistant",
             "content": "Rust focuses on safety and performance.",
@@ -586,7 +668,12 @@ async fn test_full_session_workflow() {
 
     // 4. Get conversation history
     let history_response = client
-        .get(&format!("{}/sessions/{}/history?project={}", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}/history?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to get history");
@@ -600,7 +687,12 @@ async fn test_full_session_workflow() {
 
     // 5. Get session details
     let session_response = client
-        .get(&format!("{}/sessions/{}?project={}", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to get session");
@@ -612,7 +704,12 @@ async fn test_full_session_workflow() {
 
     // 6. Replay the session
     let replay_response = client
-        .get(&format!("{}/sessions/{}/replay?project={}", env.server_url, session_id, env.project_param()))
+        .get(&format!(
+            "{}/sessions/{}/replay?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to replay");
@@ -622,7 +719,11 @@ async fn test_full_session_workflow() {
 
     // 7. List sessions
     let list_response = client
-        .get(&format!("{}/sessions?project={}&user_id=alice", env.server_url, env.project_param()))
+        .get(&format!(
+            "{}/sessions?project={}&user_id=alice",
+            env.server_url,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to list sessions");
@@ -632,7 +733,12 @@ async fn test_full_session_workflow() {
 
     // 8. Delete the session
     let delete_response = client
-        .delete(&format!("{}/sessions/{}?project={}", env.server_url, session_id, env.project_param()))
+        .delete(&format!(
+            "{}/sessions/{}?project={}",
+            env.server_url,
+            session_id,
+            env.project_param()
+        ))
         .send()
         .await
         .expect("Failed to delete");

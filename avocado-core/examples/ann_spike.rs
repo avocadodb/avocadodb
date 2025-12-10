@@ -1,10 +1,10 @@
-use avocado_core::{embedding, span, Span};
 use avocado_core::approx::{ApproxIndex, HnswBackend, InstantBackend};
+use avocado_core::{embedding, span, Span};
 use serde_json::json;
-use sha2::{Sha256, Digest};
-use std::time::Instant;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 fn build_corpus(num_docs: usize, lines_per_doc: usize) -> (Vec<Span>, Vec<Vec<f32>>, usize) {
     let mut spans_all = Vec::new();
@@ -12,7 +12,10 @@ fn build_corpus(num_docs: usize, lines_per_doc: usize) -> (Vec<Span>, Vec<Vec<f3
     for i in 0..num_docs {
         let mut content = String::new();
         for l in 0..lines_per_doc {
-            content.push_str(&format!("Doc {} line {}: Deterministic RAG with MMR & hybrid search.\n", i, l));
+            content.push_str(&format!(
+                "Doc {} line {}: Deterministic RAG with MMR & hybrid search.\n",
+                i, l
+            ));
         }
         total_lines += lines_per_doc;
         // Derive artifact id deterministically
@@ -25,14 +28,25 @@ fn build_corpus(num_docs: usize, lines_per_doc: usize) -> (Vec<Span>, Vec<Vec<f3
     // Embed
     let texts: Vec<&str> = spans_all.iter().map(|s| s.text.as_str()).collect();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let embeddings = rt.block_on(embedding::embed_batch(texts, None, None)).expect("embed");
+    let embeddings = rt
+        .block_on(embedding::embed_batch(texts, None, None))
+        .expect("embed");
     (spans_all, embeddings, total_lines)
 }
 
 fn main() {
-    let num_docs: usize = std::env::var("DOCS").ok().and_then(|s| s.parse().ok()).unwrap_or(500);
-    let lines_per_doc: usize = std::env::var("LINES").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
-    let k: usize = std::env::var("TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
+    let num_docs: usize = std::env::var("DOCS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+    let lines_per_doc: usize = std::env::var("LINES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    let k: usize = std::env::var("TOPK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
     let query = "What is AvocadoDB? Deterministic context compilation.";
 
     let (mut spans, embeddings, _total_lines) = build_corpus(num_docs, lines_per_doc);
@@ -44,7 +58,9 @@ fn main() {
 
     // Query embedding
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let q_emb = rt.block_on(embedding::embed_text(query, None, None)).expect("q_emb");
+    let q_emb = rt
+        .block_on(embedding::embed_text(query, None, None))
+        .expect("q_emb");
 
     // HNSW build/search/save/load (baseline)
     let t0 = Instant::now();
@@ -92,7 +108,10 @@ fn main() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let inst_for_threads = InstantBackend::build(spans.clone());
     let base = inst_for_threads.search(&q_emb, k).unwrap();
-    let base_ids: Vec<(String, usize)> = base.iter().map(|s| (s.span.id.clone(), s.span.start_line)).collect();
+    let base_ids: Vec<(String, usize)> = base
+        .iter()
+        .map(|s| (s.span.id.clone(), s.span.start_line))
+        .collect();
     let q_emb_arc = std::sync::Arc::new(q_emb.clone());
     let base_ids_arc = std::sync::Arc::new(base_ids.clone());
     let det_ok = std::sync::Arc::new(AtomicBool::new(true));
@@ -104,7 +123,10 @@ fn main() {
             let det_flag = det_ok.clone();
             scope.spawn(move || {
                 let r = backend_ref.search(&q_clone, k).unwrap();
-                let ids: Vec<(String, usize)> = r.iter().map(|s| (s.span.id.clone(), s.span.start_line)).collect();
+                let ids: Vec<(String, usize)> = r
+                    .iter()
+                    .map(|s| (s.span.id.clone(), s.span.start_line))
+                    .collect();
                 if ids != *base_ids_clone {
                     // Mark as non-deterministic (shared flag; best-effort)
                     // In a spike harness we just print
@@ -180,4 +202,3 @@ fn max_rss_kb() -> u64 {
     }
     0
 }
-

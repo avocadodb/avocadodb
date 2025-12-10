@@ -18,7 +18,10 @@ pub fn recommend_model(
     corpus_size: Option<usize>,
     use_case: Option<&str>,
 ) -> Result<ModelRecommendation> {
-    println!("\n{}", style("🥑 AvocadoDB Model Recommendation").bold().green());
+    println!(
+        "\n{}",
+        style("🥑 AvocadoDB Model Recommendation").bold().green()
+    );
     println!("{}", style("─".repeat(60)).dim());
 
     // Determine recommendation based on inputs
@@ -124,7 +127,10 @@ fn print_recommendation(
     // Print inputs
     println!("\n{}", style("Your Configuration:").bold());
     if let Some(size) = corpus_size {
-        println!("  Corpus size: {} documents", style(format!("{}", size)).cyan());
+        println!(
+            "  Corpus size: {} documents",
+            style(format!("{}", size)).cyan()
+        );
     }
     if let Some(case) = use_case {
         println!("  Use case: {}", style(case).cyan());
@@ -132,7 +138,8 @@ fn print_recommendation(
 
     // Print recommendation
     println!("\n{}", style("Recommended Model:").bold().green());
-    println!("  {} {} ({} dimensions)",
+    println!(
+        "  {} {} ({} dimensions)",
         style("✓").green(),
         style(&rec.model).cyan().bold(),
         style(rec.dimensions).dim()
@@ -149,7 +156,10 @@ fn print_recommendation(
     println!("  {}", style(&rec.env_var_command).yellow());
     if !rec.env_var_command.contains("no configuration") {
         println!("\n  Then re-ingest your documents:");
-        println!("  {}", style("avocado clear && avocado ingest <path> --recursive").dim());
+        println!(
+            "  {}",
+            style("avocado clear && avocado ingest <path> --recursive").dim()
+        );
     }
 
     // Print comparison table
@@ -168,7 +178,8 @@ fn print_model_table() {
         ("bge-large-en-v1.5", 1024, "Slower", "Best", "bgelarge"),
     ];
 
-    println!("\n  {:<25} {:<6} {:<10} {:<8} {:<10}",
+    println!(
+        "\n  {:<25} {:<6} {:<10} {:<8} {:<10}",
         style("Model").bold(),
         style("Dims").bold(),
         style("Speed").bold(),
@@ -178,7 +189,8 @@ fn print_model_table() {
     println!("  {}", style("─".repeat(70)).dim());
 
     for (model, dims, speed, quality, alias) in models {
-        println!("  {:<25} {:<6} {:<10} {:<8} {:<10}",
+        println!(
+            "  {:<25} {:<6} {:<10} {:<8} {:<10}",
             model,
             dims,
             speed,

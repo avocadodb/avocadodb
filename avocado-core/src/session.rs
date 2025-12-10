@@ -17,9 +17,7 @@ use crate::compiler;
 use crate::db::Database;
 use crate::index::VectorIndex;
 use crate::storage::StorageBackend;
-use crate::types::{
-    CompilerConfig, Message, MessageRole, Result, Session, WorkingSet,
-};
+use crate::types::{CompilerConfig, Message, MessageRole, Result, Session, WorkingSet};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -88,7 +86,8 @@ impl SessionManager {
             .add_message(session_id, MessageRole::User, query, None)?;
 
         // Compile the context
-        let working_set = compiler::compile(query, config.clone(), &self.db, index, api_key).await?;
+        let working_set =
+            compiler::compile(query, config.clone(), &self.db, index, api_key).await?;
 
         // Associate the working set with the session
         self.db.associate_working_set(
@@ -367,13 +366,9 @@ impl<B: StorageBackend> SessionManagerGeneric<B> {
             .await?;
 
         // Compile the context using the backend
-        let working_set = compiler::compile_with_backend(
-            query,
-            config.clone(),
-            self.backend.as_ref(),
-            api_key,
-        )
-        .await?;
+        let working_set =
+            compiler::compile_with_backend(query, config.clone(), self.backend.as_ref(), api_key)
+                .await?;
 
         // Associate the working set with the session
         self.backend
@@ -714,9 +709,7 @@ mod tests {
         db.add_message(&session.id, MessageRole::User, "How are you?", None)
             .unwrap();
 
-        let history = manager
-            .get_conversation_history(&session.id, None)
-            .unwrap();
+        let history = manager.get_conversation_history(&session.id, None).unwrap();
 
         assert!(history.contains("User: Hello"));
         assert!(history.contains("Assistant: Hi there!"));
@@ -770,9 +763,7 @@ mod tests {
 
         let session = manager.start_session(Some("user1")).unwrap();
 
-        let history = manager
-            .get_conversation_history(&session.id, None)
-            .unwrap();
+        let history = manager.get_conversation_history(&session.id, None).unwrap();
 
         assert_eq!(history, "");
     }
@@ -1031,9 +1022,7 @@ mod tests {
         assert!(resp2.content.contains("Ownership"));
 
         // Get conversation history
-        let history = manager
-            .get_conversation_history(&session.id, None)
-            .unwrap();
+        let history = manager.get_conversation_history(&session.id, None).unwrap();
 
         // Verify all messages are in history
         assert!(history.contains("What is Rust?"));

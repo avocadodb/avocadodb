@@ -3,18 +3,18 @@
 //! Phase 1 uses brute-force cosine similarity, which is fine for <10K spans.
 //! Phase 2 uses HNSW for fast approximate nearest neighbor search (10-100x faster).
 
-use crate::types::{Result, ScoredSpan, Span};
 use crate::embedding;
-use hnsw_rs::prelude::*;
+use crate::types::{Result, ScoredSpan, Span};
 use hnsw_rs::api::AnnT;
-use std::path::Path;
-use std::fs;
-use std::time::Instant;
+use hnsw_rs::prelude::*;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use serde::{Serialize, Deserialize};
+use std::fs;
+use std::path::Path;
+use std::time::Instant;
 
 /// In-memory vector index for fast similarity search
-/// 
+///
 /// Uses HNSW (Hierarchical Navigable Small World) for approximate nearest neighbor search.
 /// This provides O(log n) search time instead of O(n) brute-force, making it 10-100x faster
 /// for large repositories (10K+ spans).
@@ -79,10 +79,10 @@ impl VectorIndex {
         let max_layer = 16; // Maximum layers in the graph
         let ef_construction = 200; // Construction quality parameter
         let hnsw = Hnsw::<f32, DistCosine>::new(
-            max_nb_connection, // m parameter (bi-directional links per node)
-            max_elements,      // Expected number of elements
-            max_layer,         // Maximum layers
-            ef_construction,   // Construction quality
+            max_nb_connection,     // m parameter (bi-directional links per node)
+            max_elements,          // Expected number of elements
+            max_layer,             // Maximum layers
+            ef_construction,       // Construction quality
             DistCosine::default(), // Distance function
         );
 
@@ -147,11 +147,7 @@ impl VectorIndex {
         let ef_search = (k * 2).clamp(50, 200);
 
         // Search HNSW for approximate nearest neighbors
-        let search_results = hnsw.search(
-            query_embedding,
-            k.min(self.spans.len()),
-            ef_search,
-        );
+        let search_results = hnsw.search(query_embedding, k.min(self.spans.len()), ef_search);
 
         // Convert HNSW results to ScoredSpan
         // HNSW returns Neighbour structs with distance and data (our span index)
@@ -162,15 +158,15 @@ impl VectorIndex {
             .filter_map(|neighbour| {
                 let idx = neighbour.d_id; // The data we stored (span index)
                 let distance = neighbour.distance;
-                
+
                 // HNSW uses distance (0 = identical, 2 = opposite)
                 // Convert to similarity score: score = 1 - (distance / 2)
                 // This gives us a score in [0, 1] range where 1 = identical
                 let score: f32 = 1.0 - (distance / 2.0);
-                
+
                 // Ensure score is in valid range [0, 1]
                 let score = score.clamp(0.0_f32, 1.0_f32);
-                
+
                 self.spans.get(idx).map(|span| ScoredSpan {
                     span: span.clone(),
                     score,
@@ -180,7 +176,11 @@ impl VectorIndex {
 
         // Sort by score descending (HNSW results are already sorted, but ensure it)
         let mut results = results;
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(results)
     }
@@ -199,7 +199,7 @@ impl VectorIndex {
     pub fn spans(&self) -> &[Span] {
         &self.spans
     }
-    
+
     /// Save HNSW index to disk for persistence (Phase 2.1)
     ///
     /// Saves both the HNSW graph structure and the spans metadata.
@@ -215,9 +215,10 @@ impl VectorIndex {
     /// Ok(()) if successful
     pub fn save_to_disk(&self, cache_dir: &Path) -> Result<()> {
         // Create directory if needed
-        fs::create_dir_all(cache_dir)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to create cache directory: {}", e)))?;
-        
+        fs::create_dir_all(cache_dir).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to create cache directory: {}", e))
+        })?;
+
         // Save HNSW index using its native dump format
         // Note: We don't currently load this dump back due to lifetime
         // limitations in `hnsw_rs` (see docs/HNSW_LIFETIME_ISSUE.md).
@@ -229,39 +230,48 @@ impl VectorIndex {
             // Write to a temporary dir then atomically move into place
             let tmp_dir = cache_dir.join(".tmp");
             let _ = fs::remove_dir_all(&tmp_dir);
-            fs::create_dir_all(&tmp_dir)
-                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to create tmp dir: {}", e)))?;
-            hnsw.file_dump(&tmp_dir, basename)
-                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to dump HNSW index: {}", e)))?;
+            fs::create_dir_all(&tmp_dir).map_err(|e| {
+                crate::types::Error::Other(anyhow::anyhow!("Failed to create tmp dir: {}", e))
+            })?;
+            hnsw.file_dump(&tmp_dir, basename).map_err(|e| {
+                crate::types::Error::Other(anyhow::anyhow!("Failed to dump HNSW index: {}", e))
+            })?;
             // Move files into place
             for ext in &["hnsw.graph", "hnsw.data"] {
                 let src = tmp_dir.join(format!("{}.{}", basename, ext));
                 let dst = cache_dir.join(format!("{}.{}", basename, ext));
-                fs::rename(&src, &dst)
-                    .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move {}: {}", ext, e)))?;
+                fs::rename(&src, &dst).map_err(|e| {
+                    crate::types::Error::Other(anyhow::anyhow!("Failed to move {}: {}", ext, e))
+                })?;
             }
             let _ = fs::remove_dir_all(&tmp_dir);
         }
-        
+
         // Save spans metadata separately (for validation and reference)
         let spans_path = cache_dir.join("spans.bin");
         let spans_tmp = cache_dir.join("spans.bin.tmp");
-        let spans_data = bincode::serialize(&self.spans)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to serialize spans: {}", e)))?;
-        fs::write(&spans_tmp, &spans_data)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to write spans cache: {}", e)))?;
-        fs::rename(&spans_tmp, &spans_path)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move spans cache: {}", e)))?;
-        
+        let spans_data = bincode::serialize(&self.spans).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to serialize spans: {}", e))
+        })?;
+        fs::write(&spans_tmp, &spans_data).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to write spans cache: {}", e))
+        })?;
+        fs::rename(&spans_tmp, &spans_path).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to move spans cache: {}", e))
+        })?;
+
         // Save dimension for validation
         let dim_path = cache_dir.join("dimension.bin");
         let dim_tmp = cache_dir.join("dimension.bin.tmp");
-        let dim_data = bincode::serialize(&self.dimension)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to serialize dimension: {}", e)))?;
-        fs::write(&dim_tmp, &dim_data)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to write dimension cache: {}", e)))?;
-        fs::rename(&dim_tmp, &dim_path)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move dimension cache: {}", e)))?;
+        let dim_data = bincode::serialize(&self.dimension).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to serialize dimension: {}", e))
+        })?;
+        fs::write(&dim_tmp, &dim_data).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to write dimension cache: {}", e))
+        })?;
+        fs::rename(&dim_tmp, &dim_path).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to move dimension cache: {}", e))
+        })?;
 
         // Save metadata with checksum and version
         let checksum = {
@@ -276,18 +286,21 @@ impl VectorIndex {
             dimension: self.dimension,
             spans_checksum: checksum,
         };
-        let meta_json = serde_json::to_vec(&meta)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to serialize index meta: {}", e)))?;
+        let meta_json = serde_json::to_vec(&meta).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to serialize index meta: {}", e))
+        })?;
         let meta_path = cache_dir.join("index.meta.json");
         let meta_tmp = cache_dir.join("index.meta.json.tmp");
-        fs::write(&meta_tmp, &meta_json)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to write index meta: {}", e)))?;
-        fs::rename(&meta_tmp, &meta_path)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to move index meta: {}", e)))?;
-        
+        fs::write(&meta_tmp, &meta_json).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to write index meta: {}", e))
+        })?;
+        fs::rename(&meta_tmp, &meta_path).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to move index meta: {}", e))
+        })?;
+
         Ok(())
     }
-    
+
     /// Load HNSW index from disk (Phase 2.1)
     ///
     /// **Note**: Due to lifetime constraints in the `hnsw_rs` library, we cannot directly
@@ -311,28 +324,36 @@ impl VectorIndex {
         let spans_path = cache_dir.join("spans.bin");
         let dim_path = cache_dir.join("dimension.bin");
         let meta_path = cache_dir.join("index.meta.json");
-        
+
         if !spans_path.exists() || !dim_path.exists() || !meta_path.exists() {
             return Ok(None);
         }
         // Read and validate metadata
-        let meta_json = fs::read(&meta_path)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to read index meta: {}", e)))?;
-        let meta: IndexMeta = serde_json::from_slice(&meta_json)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to parse index meta: {}", e)))?;
+        let meta_json = fs::read(&meta_path).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to read index meta: {}", e))
+        })?;
+        let meta: IndexMeta = serde_json::from_slice(&meta_json).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to parse index meta: {}", e))
+        })?;
         if meta.version != 1 {
-            return Err(crate::types::Error::Other(anyhow::anyhow!("Unsupported index version: {}", meta.version)));
+            return Err(crate::types::Error::Other(anyhow::anyhow!(
+                "Unsupported index version: {}",
+                meta.version
+            )));
         }
 
         // Load dimension
-        let dim_data = fs::read(&dim_path)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to read dimension cache: {}", e)))?;
-        let cached_dimension: usize = bincode::deserialize(&dim_data)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to deserialize dimension: {}", e)))?;
-        
+        let dim_data = fs::read(&dim_path).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to read dimension cache: {}", e))
+        })?;
+        let cached_dimension: usize = bincode::deserialize(&dim_data).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to deserialize dimension: {}", e))
+        })?;
+
         // Load spans
-        let spans_data = fs::read(&spans_path)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to read spans cache: {}", e)))?;
+        let spans_data = fs::read(&spans_path).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to read spans cache: {}", e))
+        })?;
         // Validate checksum
         let mut hasher = Sha256::new();
         hasher.update(&spans_data);
@@ -342,9 +363,10 @@ impl VectorIndex {
                 "Index cache checksum mismatch"
             )));
         }
-        let spans: Vec<Span> = bincode::deserialize(&spans_data)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to deserialize spans: {}", e)))?;
-        
+        let spans: Vec<Span> = bincode::deserialize(&spans_data).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to deserialize spans: {}", e))
+        })?;
+
         // Basic validation: ensure cached dimension matches spans embeddings
         let actual_dimension = spans
             .iter()
@@ -357,9 +379,9 @@ impl VectorIndex {
                 actual_dimension
             )));
         }
-        
+
         // Rebuild HNSW from cached spans
-        // 
+        //
         // LIMITATION: The `hnsw_rs` library has lifetime constraints that prevent us from
         // directly loading and storing the HNSW structure. The loaded HNSW has a lifetime
         // tied to HnswIo, which conflicts with our need for 'static lifetime in VectorIndex.

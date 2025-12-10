@@ -47,7 +47,8 @@ pub async fn evaluate(
             .collect();
 
         // Calculate metrics
-        let (recall, precision, mrr) = calculate_metrics(&query.expected_paths, &result_paths, query.k);
+        let (recall, precision, mrr) =
+            calculate_metrics(&query.expected_paths, &result_paths, query.k);
 
         results.push(EvalResult {
             query: query.query.clone(),
@@ -60,7 +61,8 @@ pub async fn evaluate(
 
     // Calculate aggregate metrics
     let mean_recall = results.iter().map(|r| r.recall_at_k).sum::<f32>() / results.len() as f32;
-    let mean_precision = results.iter().map(|r| r.precision_at_k).sum::<f32>() / results.len() as f32;
+    let mean_precision =
+        results.iter().map(|r| r.precision_at_k).sum::<f32>() / results.len() as f32;
     let mean_mrr = results.iter().map(|r| r.mrr).sum::<f32>() / results.len() as f32;
 
     // Calculate latency percentiles
@@ -68,7 +70,10 @@ pub async fn evaluate(
     let p50_idx = latencies.len() / 2;
     let p99_idx = (latencies.len() as f32 * 0.99) as usize;
     let p50_latency_ms = latencies.get(p50_idx).copied().unwrap_or(0);
-    let p99_latency_ms = latencies.get(p99_idx.min(latencies.len().saturating_sub(1))).copied().unwrap_or(0);
+    let p99_latency_ms = latencies
+        .get(p99_idx.min(latencies.len().saturating_sub(1)))
+        .copied()
+        .unwrap_or(0);
 
     Ok(EvalSummary {
         mean_recall,

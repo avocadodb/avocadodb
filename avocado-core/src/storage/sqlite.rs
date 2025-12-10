@@ -149,11 +149,7 @@ impl StorageBackend for SqliteBackend {
 
     // ========== Sessions ==========
 
-    async fn create_session(
-        &self,
-        user_id: Option<&str>,
-        title: Option<&str>,
-    ) -> Result<Session> {
+    async fn create_session(&self, user_id: Option<&str>, title: Option<&str>) -> Result<Session> {
         let db = self.db.clone();
         let uid = user_id.map(|s| s.to_string());
         let t = title.map(|s| s.to_string());
@@ -223,11 +219,7 @@ impl StorageBackend for SqliteBackend {
             .map_err(|e| Error::Other(anyhow::anyhow!("Task join error: {}", e)))?
     }
 
-    async fn get_messages(
-        &self,
-        session_id: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<Message>> {
+    async fn get_messages(&self, session_id: &str, limit: Option<usize>) -> Result<Vec<Message>> {
         let db = self.db.clone();
         let sid = session_id.to_string();
         task::spawn_blocking(move || db.get_messages(&sid, limit))
@@ -251,11 +243,9 @@ impl StorageBackend for SqliteBackend {
         let ws = working_set.clone();
         let q = query.to_string();
         let cfg = config.clone();
-        task::spawn_blocking(move || {
-            db.associate_working_set(&sid, mid.as_deref(), &ws, &q, &cfg)
-        })
-        .await
-        .map_err(|e| Error::Other(anyhow::anyhow!("Task join error: {}", e)))?
+        task::spawn_blocking(move || db.associate_working_set(&sid, mid.as_deref(), &ws, &q, &cfg))
+            .await
+            .map_err(|e| Error::Other(anyhow::anyhow!("Task join error: {}", e)))?
     }
 
     async fn get_session_full(&self, session_id: &str) -> Result<Option<SessionWithMessages>> {

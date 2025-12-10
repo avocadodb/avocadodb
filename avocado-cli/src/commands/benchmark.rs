@@ -29,14 +29,21 @@ pub struct BenchmarkResults {
 
 /// Run embedding performance benchmarks
 pub async fn run_benchmark(verbose: bool) -> Result<BenchmarkResults> {
-    println!("\n{}", style("🥑 AvocadoDB Performance Benchmark").bold().green());
+    println!(
+        "\n{}",
+        style("🥑 AvocadoDB Performance Benchmark").bold().green()
+    );
     println!("{}", style("─".repeat(60)).dim());
 
     let model_name = embedding::embedding_model().to_string();
     let dimensions = embedding::embedding_dimension();
 
     println!("\n{} {}", style("Model:").bold(), style(&model_name).cyan());
-    println!("{} {} dimensions", style("Dimensions:").bold(), style(dimensions).cyan());
+    println!(
+        "{} {} dimensions",
+        style("Dimensions:").bold(),
+        style(dimensions).cyan()
+    );
     println!();
 
     // Create progress spinner
@@ -44,7 +51,7 @@ pub async fn run_benchmark(verbose: bool) -> Result<BenchmarkResults> {
     spinner.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.green} {msg}")
-            .unwrap()
+            .unwrap(),
     );
 
     // Benchmark 1: Single embedding
@@ -69,7 +76,8 @@ pub async fn run_benchmark(verbose: bool) -> Result<BenchmarkResults> {
     let single_ms = median(&durations);
     spinner.finish_and_clear();
 
-    println!("  {} {:.2}ms",
+    println!(
+        "  {} {:.2}ms",
         style("✓ Single embedding:").green(),
         style(format!("{:.2}", single_ms)).cyan().bold()
     );
@@ -90,7 +98,8 @@ pub async fn run_benchmark(verbose: bool) -> Result<BenchmarkResults> {
     let batch_10_ms = median(&durations);
     spinner.finish_and_clear();
 
-    println!("  {} {:.2}ms ({:.2}ms per text)",
+    println!(
+        "  {} {:.2}ms ({:.2}ms per text)",
         style("✓ Batch of 10:").green(),
         style(format!("{:.2}", batch_10_ms)).cyan().bold(),
         style(format!("{:.2}", batch_10_ms / 10.0)).dim()
@@ -112,7 +121,8 @@ pub async fn run_benchmark(verbose: bool) -> Result<BenchmarkResults> {
     let batch_50_ms = median(&durations);
     spinner.finish_and_clear();
 
-    println!("  {} {:.2}ms ({:.2}ms per text)",
+    println!(
+        "  {} {:.2}ms ({:.2}ms per text)",
         style("✓ Batch of 50:").green(),
         style(format!("{:.2}", batch_50_ms)).cyan().bold(),
         style(format!("{:.2}", batch_50_ms / 50.0)).dim()
@@ -134,7 +144,8 @@ pub async fn run_benchmark(verbose: bool) -> Result<BenchmarkResults> {
     let batch_100_ms = median(&durations);
     spinner.finish_and_clear();
 
-    println!("  {} {:.2}ms ({:.2}ms per text)",
+    println!(
+        "  {} {:.2}ms ({:.2}ms per text)",
         style("✓ Batch of 100:").green(),
         style(format!("{:.2}", batch_100_ms)).cyan().bold(),
         style(format!("{:.2}", batch_100_ms / 100.0)).dim()
@@ -144,7 +155,11 @@ pub async fn run_benchmark(verbose: bool) -> Result<BenchmarkResults> {
     let hardware_rating = rate_hardware(single_ms, batch_100_ms);
 
     println!("\n{}", style("─".repeat(60)).dim());
-    println!("{} {}", style("Hardware Rating:").bold(), style(&hardware_rating).yellow().bold());
+    println!(
+        "{} {}",
+        style("Hardware Rating:").bold(),
+        style(&hardware_rating).yellow().bold()
+    );
 
     // Comparison with OpenAI
     print_comparison(single_ms);
@@ -208,15 +223,18 @@ fn print_comparison(pure_rust_ms: f64) {
     let openai_typical_ms = 250.0;
     let speedup = openai_typical_ms / pure_rust_ms;
 
-    println!("  {} ~{:.0}ms (typical)",
+    println!(
+        "  {} ~{:.0}ms (typical)",
         style("OpenAI ada-002:").dim(),
         openai_typical_ms
     );
-    println!("  {} {:.2}ms",
+    println!(
+        "  {} {:.2}ms",
         style("Pure Rust:").green().bold(),
         style(format!("{:.2}", pure_rust_ms)).cyan().bold()
     );
-    println!("\n  {} {}x faster",
+    println!(
+        "\n  {} {}x faster",
         style("Speedup:").bold(),
         style(format!("{:.1}", speedup)).green().bold()
     );

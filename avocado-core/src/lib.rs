@@ -22,30 +22,54 @@
 
 #![warn(missing_docs)]
 
-pub mod types;
-pub mod span;
-pub mod embedding;
+pub mod approx;
 pub mod compiler;
 pub mod db;
+pub mod diff;
+pub mod embedding;
+pub mod eval;
 pub mod index;
 pub mod session;
-pub mod approx;
-pub mod eval;
-pub mod diff;
+pub mod span;
 pub mod storage;
+pub mod types;
 
 // Re-export commonly used types
 pub use types::{
-    Artifact, Citation, CompilerConfig, Error, Result, ScoredSpan, Span, WorkingSet,
-    Session, Message, MessageRole, SessionWorkingSet,
-    // New types for enhanced determinism and explainability
-    Manifest, ChunkingParams, IndexParams,
-    ExplainPlan, ExplainCandidate, ExplainTiming, ExplainThresholds,
-    IngestAction,
-    GoldenQuery, EvalResult, EvalSummary,
-    WorkingSetDiff, DiffEntry, RerankEntry,
     // Multi-agent orchestration types
-    Agent, Stance, AgentRelation, AgentMessageMeta, AgentRelationSummary, AgentRelationEntry,
+    Agent,
+    AgentMessageMeta,
+    AgentRelation,
+    AgentRelationEntry,
+    AgentRelationSummary,
+    Artifact,
+    ChunkingParams,
+    Citation,
+    CompilerConfig,
+    DiffEntry,
+    Error,
+    EvalResult,
+    EvalSummary,
+    ExplainCandidate,
+    ExplainPlan,
+    ExplainThresholds,
+    ExplainTiming,
+    GoldenQuery,
+    IndexParams,
+    IngestAction,
+    // New types for enhanced determinism and explainability
+    Manifest,
+    Message,
+    MessageRole,
+    RerankEntry,
+    Result,
+    ScoredSpan,
+    Session,
+    SessionWorkingSet,
+    Span,
+    Stance,
+    WorkingSet,
+    WorkingSetDiff,
 };
 
 pub use session::{SessionManager, SessionManagerGeneric, SessionReplay, SessionTurn};
@@ -55,9 +79,8 @@ pub use compiler::{compile, compile_with_backend, compile_with_backend_options};
 
 // Re-export storage module types
 pub use storage::{
-    StorageBackend, StorageConfig, SqliteBackend,
+    create_backend, create_backend_from_env, SqliteBackend, StorageBackend, StorageConfig,
     VectorSearchProvider, VectorSearchResult,
-    create_backend, create_backend_from_env,
 };
 
 /// The version of AvocadoDB

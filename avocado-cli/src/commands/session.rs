@@ -3,9 +3,7 @@
 //! Commands for managing conversation sessions via CLI.
 
 use anyhow::Result;
-use avocado_core::{
-    db::Database, session::SessionManager, CompilerConfig, MessageRole,
-};
+use avocado_core::{db::Database, session::SessionManager, CompilerConfig, MessageRole};
 use clap::Subcommand;
 use console::style;
 use std::path::PathBuf;
@@ -227,9 +225,9 @@ pub async fn handle_session_command(cmd: SessionCommands) -> Result<()> {
         } => {
             let db = Database::new(&db_path)?;
 
-            let session = db.get_session(&session_id)?.ok_or_else(|| {
-                anyhow::anyhow!("Session not found: {}", session_id)
-            })?;
+            let session = db
+                .get_session(&session_id)?
+                .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
 
             let messages = db.get_messages(&session_id, None)?;
 
@@ -328,7 +326,11 @@ pub async fn handle_session_command(cmd: SessionCommands) -> Result<()> {
             );
             println!("  {} {}", style("Message ID:").bold(), message.id);
             println!("  {} {}", style("Role:").bold(), message.role.as_str());
-            println!("  {} {}", style("Sequence:").bold(), message.sequence_number);
+            println!(
+                "  {} {}",
+                style("Sequence:").bold(),
+                message.sequence_number
+            );
         }
 
         SessionCommands::Compile {
@@ -361,11 +363,7 @@ pub async fn handle_session_command(cmd: SessionCommands) -> Result<()> {
                 .await?;
 
             println!("{} Compilation complete", style("✓").green().bold());
-            println!(
-                "  {} {}",
-                style("Message ID:").bold(),
-                message.id
-            );
+            println!("  {} {}", style("Message ID:").bold(), message.id);
             println!(
                 "  {} {} / {}",
                 style("Tokens:").bold(),
@@ -510,11 +508,7 @@ pub async fn handle_session_command(cmd: SessionCommands) -> Result<()> {
 
                 // Assistant message
                 if let Some(asst) = &turn.assistant_message {
-                    println!(
-                        "\n{} {}",
-                        style("Assistant:").bold().green(),
-                        asst.content
-                    );
+                    println!("\n{} {}", style("Assistant:").bold().green(), asst.content);
                 }
             }
 

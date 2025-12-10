@@ -46,18 +46,12 @@ fn bench_assistant_message_insertion(c: &mut Criterion) {
             || {
                 let (_temp_dir, db) = create_test_db();
                 let session_manager = SessionManager::new(db);
-                let session = session_manager
-                    .start_session(Some("bench_user"))
-                    .unwrap();
+                let session = session_manager.start_session(Some("bench_user")).unwrap();
                 (session_manager, session.id)
             },
             |(session_manager, session_id)| {
                 let message = session_manager
-                    .add_assistant_message(
-                        black_box(&session_id),
-                        black_box("Test response"),
-                        None,
-                    )
+                    .add_assistant_message(black_box(&session_id), black_box("Test response"), None)
                     .unwrap();
                 black_box(message)
             },
@@ -77,18 +71,12 @@ fn bench_history_retrieval(c: &mut Criterion) {
                 || {
                     let (_temp_dir, db) = create_test_db();
                     let session_manager = SessionManager::new(db);
-                    let session = session_manager
-                        .start_session(Some("bench_user"))
-                        .unwrap();
+                    let session = session_manager.start_session(Some("bench_user")).unwrap();
 
                     // Pre-populate with assistant messages (no compilation needed)
                     for i in 0..size {
                         session_manager
-                            .add_assistant_message(
-                                &session.id,
-                                &format!("Response {}", i),
-                                None,
-                            )
+                            .add_assistant_message(&session.id, &format!("Response {}", i), None)
                             .unwrap();
                     }
 
@@ -119,18 +107,12 @@ fn bench_session_replay(c: &mut Criterion) {
                 || {
                     let (_temp_dir, db) = create_test_db();
                     let session_manager = SessionManager::new(db);
-                    let session = session_manager
-                        .start_session(Some("bench_user"))
-                        .unwrap();
+                    let session = session_manager.start_session(Some("bench_user")).unwrap();
 
                     // Create conversation turns with assistant messages only
                     for i in 0..size {
                         session_manager
-                            .add_assistant_message(
-                                &session.id,
-                                &format!("Answer {}", i),
-                                None,
-                            )
+                            .add_assistant_message(&session.id, &format!("Answer {}", i), None)
                             .unwrap();
                     }
 

@@ -99,7 +99,10 @@ pub async fn compile_with_backend_options<B: StorageBackend>(
     // Convert to ScoredSpan format
     let semantic_spans: Vec<ScoredSpan> = semantic_results
         .into_iter()
-        .map(|r| ScoredSpan { span: r.span, score: r.score })
+        .map(|r| ScoredSpan {
+            span: r.span,
+            score: r.score,
+        })
         .collect();
 
     // Capture semantic candidates for explain
@@ -181,7 +184,8 @@ pub async fn compile_with_backend_options<B: StorageBackend>(
 
     // Step 8: Build context with citations
     let t0 = std::time::Instant::now();
-    let (context_text, citations, sorted_spans) = build_context_with_backend(&sorted_scored_spans, backend).await?;
+    let (context_text, citations, sorted_spans) =
+        build_context_with_backend(&sorted_scored_spans, backend).await?;
     timing.build_context_ms = t0.elapsed().as_millis() as u64;
 
     let tokens_used = count_tokens(&context_text);
@@ -598,10 +602,7 @@ fn hybrid_fusion(
     // Add semantic scores using RRF
     for (rank, scored) in semantic.into_iter().enumerate() {
         let rrf_score = semantic_weight / (60.0 + rank as f32);
-        scores.insert(
-            scored.span.id.clone(),
-            (scored.span, rrf_score),
-        );
+        scores.insert(scored.span.id.clone(), (scored.span, rrf_score));
     }
 
     // Add lexical scores using RRF
@@ -684,9 +685,11 @@ fn apply_mmr(
                 selected
                     .iter()
                     .filter_map(|selected_span: &ScoredSpan| {
-                        selected_span.span.embedding.as_ref().map(|selected_emb| {
-                            cosine_similarity(candidate_emb, selected_emb)
-                        })
+                        selected_span
+                            .span
+                            .embedding
+                            .as_ref()
+                            .map(|selected_emb| cosine_similarity(candidate_emb, selected_emb))
                     })
                     .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .unwrap_or(0.0)
@@ -757,7 +760,11 @@ fn pack_token_budget(candidates: Vec<ScoredSpan>, budget: usize) -> Vec<ScoredSp
     candidates_with_density.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                b.0.score
+                    .partial_cmp(&a.0.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     });
 
     // First pass: greedy selection of high-value spans
@@ -865,7 +872,7 @@ fn build_context(scored_spans: &[ScoredSpan], db: &Database) -> Result<(String, 
 
     for (idx, scored_span) in scored_spans.iter().enumerate() {
         let span = &scored_span.span;
-        
+
         // Get artifact path for citation
         let artifact = db.get_artifact(&span.artifact_id)?;
         let artifact_path = artifact

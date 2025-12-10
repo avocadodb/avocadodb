@@ -8,7 +8,7 @@ use anyhow::Result;
 use avocado_core::{compiler, db::Database, embedding, span, Artifact, CompilerConfig};
 use clap::{Parser, Subcommand};
 use console::style;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use sha2::Digest;
 use std::fs;
 use std::path::PathBuf;
@@ -227,7 +227,7 @@ async fn main() -> Result<()> {
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} files ({msg})")
                     .unwrap()
-                    .progress_chars("#>-")
+                    .progress_chars("#>-"),
             );
             overall_pb.set_message("starting");
 
@@ -425,10 +425,28 @@ async fn main() -> Result<()> {
                             println!("\n{}", style("─".repeat(60)).dim());
                         }
                         let tokens = ws.get("tokens_used").and_then(|x| x.as_u64()).unwrap_or(0);
-                        let spans = ws.get("citations").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
-                        let utilization = if budget > 0 { ((tokens as f32 / budget as f32) * 100.0) as usize } else { 0 };
-                        println!("{}  {} / {} ({}%)", style("Tokens:   ").bold(), style(tokens).cyan().bold(), style(budget).dim(), utilization);
-                        println!("{}  {} spans", style("Compiled: ").bold(), style(spans).cyan().bold());
+                        let spans = ws
+                            .get("citations")
+                            .and_then(|c| c.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        let utilization = if budget > 0 {
+                            ((tokens as f32 / budget as f32) * 100.0) as usize
+                        } else {
+                            0
+                        };
+                        println!(
+                            "{}  {} / {} ({}%)",
+                            style("Tokens:   ").bold(),
+                            style(tokens).cyan().bold(),
+                            style(budget).dim(),
+                            utilization
+                        );
+                        println!(
+                            "{}  {} spans",
+                            style("Compiled: ").bold(),
+                            style(spans).cyan().bold()
+                        );
                     }
                 }
                 return Ok(());
@@ -437,34 +455,36 @@ async fn main() -> Result<()> {
             // Local mode
             let db = Database::new(&db_path)?;
 
-    // Show loading spinner
-    let spinner = if !json {
-        let sp = ProgressBar::new_spinner();
-        sp.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.green} {msg}")
-                .unwrap()
-        );
-        sp.set_message("Loading vector index...");
-        sp.enable_steady_tick(std::time::Duration::from_millis(100));
-        Some(sp)
-    } else {
-        None
-    };
+            // Show loading spinner
+            let spinner = if !json {
+                let sp = ProgressBar::new_spinner();
+                sp.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                sp.set_message("Loading vector index...");
+                sp.enable_steady_tick(std::time::Duration::from_millis(100));
+                Some(sp)
+            } else {
+                None
+            };
 
-    // Get cached vector index (rebuilds only if data changed)
-    // Note: For large repos, this can take 1-2 minutes on first query
-    // Subsequent queries in the same session are fast (index stays in memory)
-    // For best performance with large repos, use server mode
-    if let Some(sp) = &spinner {
-        sp.set_message("Building/loading vector index (this may take 1-2 min for large repos)...");
-    }
+            // Get cached vector index (rebuilds only if data changed)
+            // Note: For large repos, this can take 1-2 minutes on first query
+            // Subsequent queries in the same session are fast (index stays in memory)
+            // For best performance with large repos, use server mode
+            if let Some(sp) = &spinner {
+                sp.set_message(
+                    "Building/loading vector index (this may take 1-2 min for large repos)...",
+                );
+            }
 
-    let index = db.get_vector_index()?;
-    
-    if let Some(sp) = &spinner {
-        sp.set_message("Compiling context...");
-    }
+            let index = db.get_vector_index()?;
+
+            if let Some(sp) = &spinner {
+                sp.set_message("Compiling context...");
+            }
 
             // Compile context
             let config = CompilerConfig {
@@ -476,7 +496,9 @@ async fn main() -> Result<()> {
                 sp.set_message("Compiling context (embedding query + hybrid search)...");
             }
 
-            let working_set = compiler::compile_with_options(&query, config, &db, index.as_ref(), None, explain).await?;
+            let working_set =
+                compiler::compile_with_options(&query, config, &db, index.as_ref(), None, explain)
+                    .await?;
 
             if let Some(sp) = spinner {
                 sp.finish_and_clear();
@@ -531,45 +553,51 @@ async fn main() -> Result<()> {
             let (artifacts, spans, tokens) = db.get_stats()?;
 
             // Calculate averages
-            let avg_tokens_per_span = if spans > 0 {
-                tokens / spans
-            } else {
-                0
-            };
+            let avg_tokens_per_span = if spans > 0 { tokens / spans } else { 0 };
 
-            let avg_spans_per_artifact = if artifacts > 0 {
-                spans / artifacts
-            } else {
-                0
-            };
+            let avg_spans_per_artifact = if artifacts > 0 { spans / artifacts } else { 0 };
 
             // Print header
-            println!("\n{}", style("╔══════════════════════════════════════════════════════════════╗").cyan());
-            println!("{}", style("║         AvocadoDB Database Statistics                       ║").cyan());
-            println!("{}", style("╚══════════════════════════════════════════════════════════════╝").cyan());
+            println!(
+                "\n{}",
+                style("╔══════════════════════════════════════════════════════════════╗").cyan()
+            );
+            println!(
+                "{}",
+                style("║         AvocadoDB Database Statistics                       ║").cyan()
+            );
+            println!(
+                "{}",
+                style("╚══════════════════════════════════════════════════════════════╝").cyan()
+            );
             println!();
 
             // Main stats
-            println!("  {} {}",
+            println!(
+                "  {} {}",
                 style("Artifacts:").bold(),
                 style(format!("{}", artifacts)).cyan().bold()
             );
-            println!("  {} {}",
+            println!(
+                "  {} {}",
                 style("Spans:    ").bold(),
                 style(format!("{}", spans)).cyan().bold()
             );
-            println!("  {} {}",
+            println!(
+                "  {} {}",
                 style("Tokens:   ").bold(),
                 style(format!("{}", tokens)).cyan().bold()
             );
             println!();
 
             // Averages
-            println!("  {} {}",
+            println!(
+                "  {} {}",
                 style("Avg tokens/span:   ").dim(),
                 style(format!("{}", avg_tokens_per_span)).yellow()
             );
-            println!("  {} {}",
+            println!(
+                "  {} {}",
                 style("Avg spans/artifact:").dim(),
                 style(format!("{}", avg_spans_per_artifact)).yellow()
             );
@@ -631,9 +659,15 @@ async fn main() -> Result<()> {
             } else if spans < 1000 {
                 println!("  {} Optimal size for Phase 1", style("✓").green());
             } else if spans < 10000 {
-                println!("  {} Large corpus - consider monitoring performance", style("⚠").yellow());
+                println!(
+                    "  {} Large corpus - consider monitoring performance",
+                    style("⚠").yellow()
+                );
             } else {
-                println!("  {} Very large corpus - Phase 2 HNSW recommended", style("⚠").yellow());
+                println!(
+                    "  {} Very large corpus - Phase 2 HNSW recommended",
+                    style("⚠").yellow()
+                );
             }
             println!();
         }
@@ -680,24 +714,29 @@ async fn main() -> Result<()> {
             if let Ok(exe_path) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_path.parent() {
                     script_paths.push(exe_dir.join("scripts").join("ask.py"));
-                    script_paths.push(exe_dir.parent().unwrap_or(exe_dir).join("avocado-cli").join("scripts").join("ask.py"));
+                    script_paths.push(
+                        exe_dir
+                            .parent()
+                            .unwrap_or(exe_dir)
+                            .join("avocado-cli")
+                            .join("scripts")
+                            .join("ask.py"),
+                    );
                 }
             }
 
             // Find first existing script
-            let script = script_paths
-                .iter()
-                .find(|p| p.exists())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Could not find ask.py script. Tried: {}. \
+            let script = script_paths.iter().find(|p| p.exists()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not find ask.py script. Tried: {}. \
                         Please ensure the script exists in avocado-cli/scripts/ask.py",
-                        script_paths.iter()
-                            .map(|p| p.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                })?;
+                    script_paths
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
 
             // Build command
             let mut cmd = Command::new("python3");
@@ -766,24 +805,25 @@ async fn main() -> Result<()> {
             }
 
             // Spawn the server process
-            let mut child = match server_cmd.spawn() {
-                Ok(c) => c,
-                Err(e) => {
-                    // Fallback to running from local target if not in PATH
-                    let mut alt = Command::new(
-                        std::env::current_exe()
-                            .ok()
-                            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                            .unwrap_or_else(|| PathBuf::from(".")) // best effort
-                            .join("avocado-server"),
-                    );
-                    alt.envs(server_cmd.get_envs().filter_map(|(k, v)| {
-                        v.map(|vv| (k.to_os_string(), vv.to_os_string()))
-                    }));
-                    alt.env("RUST_LOG", "info");
-                    alt.spawn().map_err(|_| e)?
-                }
-            };
+            let mut child =
+                match server_cmd.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // Fallback to running from local target if not in PATH
+                        let mut alt = Command::new(
+                            std::env::current_exe()
+                                .ok()
+                                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                                .unwrap_or_else(|| PathBuf::from(".")) // best effort
+                                .join("avocado-server"),
+                        );
+                        alt.envs(server_cmd.get_envs().filter_map(|(k, v)| {
+                            v.map(|vv| (k.to_os_string(), vv.to_os_string()))
+                        }));
+                        alt.env("RUST_LOG", "info");
+                        alt.spawn().map_err(|_| e)?
+                    }
+                };
 
             // Wait for health
             let client = reqwest::blocking::Client::new();
@@ -793,7 +833,10 @@ async fn main() -> Result<()> {
                 if let Ok(Some(status)) = child.try_wait() {
                     anyhow::bail!("avocado-server exited prematurely with status {}", status);
                 }
-                match client.get(format!("{}/health", url.trim_end_matches('/'))).send() {
+                match client
+                    .get(format!("{}/health", url.trim_end_matches('/')))
+                    .send()
+                {
                     Ok(resp) if resp.status().is_success() => break,
                     _ => std::thread::sleep(std::time::Duration::from_millis(300)),
                 }
@@ -815,7 +858,11 @@ async fn main() -> Result<()> {
             println!(
                 "✓ Avocado server ready at {} ({})",
                 url,
-                if gpu { "remote embeddings (GPU)" } else { "local CPU embeddings" }
+                if gpu {
+                    "remote embeddings (GPU)"
+                } else {
+                    "local CPU embeddings"
+                }
             );
         }
 
@@ -830,24 +877,39 @@ async fn main() -> Result<()> {
 /// Collect files from a directory
 fn collect_files(dir: &PathBuf, recursive: bool) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    
+
     // Directories to skip (common build artifacts, dependencies, etc.)
     let skip_dirs: &[&str] = &[
-        ".git", ".svn", ".hg",
-        "node_modules", ".node_modules",
-        "venv", ".venv", "env", ".env",
-        "__pycache__", ".pytest_cache",
-        "target", "build", "dist", "out",
-        ".next", ".cache", ".tox",
-        "vendor", ".bundle",
-        ".idea", ".vscode", ".vs",
-        ".avocado",  // Skip AvocadoDB's own database directory
+        ".git",
+        ".svn",
+        ".hg",
+        "node_modules",
+        ".node_modules",
+        "venv",
+        ".venv",
+        "env",
+        ".env",
+        "__pycache__",
+        ".pytest_cache",
+        "target",
+        "build",
+        "dist",
+        "out",
+        ".next",
+        ".cache",
+        ".tox",
+        "vendor",
+        ".bundle",
+        ".idea",
+        ".vscode",
+        ".vs",
+        ".avocado", // Skip AvocadoDB's own database directory
     ];
 
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         // Skip if it's a skip directory
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             if skip_dirs.contains(&name) {
@@ -871,43 +933,69 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
     let manifest = ws.manifest.as_ref();
 
     // Header
-    println!("\n{}", style("╔══════════════════════════════════════════════════════════════════════════════╗").cyan());
-    println!("{}", style("║                    🥑 AvocadoDB Visual Pipeline Inspector                     ║").cyan());
-    println!("{}", style("╚══════════════════════════════════════════════════════════════════════════════╝").cyan());
+    println!(
+        "\n{}",
+        style("╔══════════════════════════════════════════════════════════════════════════════╗")
+            .cyan()
+    );
+    println!(
+        "{}",
+        style("║                    🥑 AvocadoDB Visual Pipeline Inspector                     ║")
+            .cyan()
+    );
+    println!(
+        "{}",
+        style("╚══════════════════════════════════════════════════════════════════════════════╝")
+            .cyan()
+    );
 
     // Query info
     println!("\n  {} {}", style("Query:").bold(), style(query).yellow());
     if let Some(m) = manifest {
-        println!("  {} {}", style("Context Hash:").bold(), style(&m.context_hash[..24]).dim());
+        println!(
+            "  {} {}",
+            style("Context Hash:").bold(),
+            style(&m.context_hash[..24]).dim()
+        );
     }
     println!();
 
     // Pipeline stages
-    let (sem_count, lex_count, fused_count, mmr_count, packed_count, final_count) = if let Some(e) = explain {
-        (
-            e.semantic_candidates.len(),
-            e.lexical_candidates.len(),
-            e.fused_candidates.len(),
-            e.mmr_candidates.len(),
-            e.packed_candidates.len(),
-            e.final_candidates.len(),
-        )
-    } else {
-        (0, 0, 0, 0, 0, ws.citations.len())
-    };
+    let (sem_count, lex_count, fused_count, mmr_count, packed_count, final_count) =
+        if let Some(e) = explain {
+            (
+                e.semantic_candidates.len(),
+                e.lexical_candidates.len(),
+                e.fused_candidates.len(),
+                e.mmr_candidates.len(),
+                e.packed_candidates.len(),
+                e.final_candidates.len(),
+            )
+        } else {
+            (0, 0, 0, 0, 0, ws.citations.len())
+        };
 
     // Get timing info
     let timing = explain.map(|e| &e.timing);
 
     // Pipeline visualization
-    println!("  {}", style("┌─────────────────────────────────────────────────────────────────────────────┐").dim());
-    println!("  {}                              {} {}                                 {}",
+    println!(
+        "  {}",
+        style("┌─────────────────────────────────────────────────────────────────────────────┐")
+            .dim()
+    );
+    println!(
+        "  {}                              {} {}                                 {}",
         style("│").dim(),
         style("RETRIEVAL PIPELINE").bold().cyan(),
         style("(deterministic)").dim(),
         style("│").dim()
     );
-    println!("  {}", style("└─────────────────────────────────────────────────────────────────────────────┘").dim());
+    println!(
+        "  {}",
+        style("└─────────────────────────────────────────────────────────────────────────────┘")
+            .dim()
+    );
     println!();
 
     // Stage boxes with flow arrows
@@ -919,13 +1007,15 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
 
     // Row 1: Semantic and Lexical search
     println!("  ┌──────────────────┐                    ┌──────────────────┐");
-    println!("  │   {} {}   │                    │   {} {}   │",
+    println!(
+        "  │   {} {}   │                    │   {} {}   │",
         style("SEMANTIC").cyan().bold(),
         style("🔍").dim(),
         style("LEXICAL").magenta().bold(),
         style("📝").dim()
     );
-    println!("  │   {} {}  │                    │   {} {}  │",
+    println!(
+        "  │   {} {}  │                    │   {} {}  │",
         style(format!("{:>4} candidates", sem_count)).white(),
         style(format!("{}ms", sem_time)).dim(),
         style(format!("{:>4} candidates", lex_count)).white(),
@@ -940,11 +1030,13 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
 
     // Row 2: Fusion
     println!("                    ┌──────────────────────┐");
-    println!("                    │     {} {}      │",
+    println!(
+        "                    │     {} {}      │",
         style("RRF FUSION").yellow().bold(),
         style("⚡").dim()
     );
-    println!("                    │    {} {}   │",
+    println!(
+        "                    │    {} {}   │",
         style(format!("{:>4} combined", fused_count)).white(),
         style(format!("{}ms", fusion_time)).dim()
     );
@@ -955,11 +1047,13 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
 
     // Row 3: MMR
     println!("                    ┌──────────────────────┐");
-    println!("                    │  {} {}   │",
+    println!(
+        "                    │  {} {}   │",
         style("MMR DIVERSITY").green().bold(),
         style("🎯").dim()
     );
-    println!("                    │    {} {}   │",
+    println!(
+        "                    │    {} {}   │",
         style(format!("{:>4} selected", mmr_count)).white(),
         style(format!("{}ms", mmr_time)).dim()
     );
@@ -970,11 +1064,13 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
 
     // Row 4: Packing
     println!("                    ┌──────────────────────┐");
-    println!("                    │   {} {}    │",
+    println!(
+        "                    │   {} {}    │",
         style("TOKEN PACK").blue().bold(),
         style("📦").dim()
     );
-    println!("                    │     {} {}   │",
+    println!(
+        "                    │     {} {}   │",
         style(format!("{:>4} packed", packed_count)).white(),
         style(format!("{}ms", pack_time)).dim()
     );
@@ -985,11 +1081,13 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
 
     // Row 5: Final output
     println!("                    ┌──────────────────────┐");
-    println!("                    │    {} {}    │",
+    println!(
+        "                    │    {} {}    │",
         style("FINAL ORDER").bold().white().on_green(),
         style("✓").green()
     );
-    println!("                    │     {} spans       │",
+    println!(
+        "                    │     {} spans       │",
         style(format!("{:>4}", final_count)).cyan().bold()
     );
     println!("                    │  (deterministic ✓)   │");
@@ -1002,19 +1100,26 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
 
     println!("  {}", style("─".repeat(78)).dim());
     println!();
-    println!("  {}   {} / {} tokens ({}% utilization)",
+    println!(
+        "  {}   {} / {} tokens ({}% utilization)",
         style("Budget:").bold(),
         style(ws.tokens_used).cyan().bold(),
         style(budget).dim(),
         style(utilization).yellow()
     );
-    println!("  {}     {}ms total {}",
+    println!(
+        "  {}     {}ms total {}",
         style("Time:").bold(),
         style(total_time).cyan().bold(),
-        if total_time < 500 { style("(fast ✓)").green() } else { style("(consider caching)").yellow() }
+        if total_time < 500 {
+            style("(fast ✓)").green()
+        } else {
+            style("(consider caching)").yellow()
+        }
     );
     if let Some(m) = manifest {
-        println!("  {}  {} (same query → same results)",
+        println!(
+            "  {}  {} (same query → same results)",
             style("Hash:").bold(),
             style(&m.context_hash[..32]).dim()
         );
@@ -1025,14 +1130,18 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
     if !ws.citations.is_empty() {
         println!("  {} (top 5):", style("Citations").bold());
         for (i, cite) in ws.citations.iter().take(5).enumerate() {
-            println!("    {}. {} {}",
+            println!(
+                "    {}. {} {}",
                 style(i + 1).dim(),
                 style(&cite.artifact_path).cyan(),
                 style(format!(":{}–{}", cite.start_line, cite.end_line)).dim()
             );
         }
         if ws.citations.len() > 5 {
-            println!("    {} more...", style(format!("... and {}", ws.citations.len() - 5)).dim());
+            println!(
+                "    {} more...",
+                style(format!("... and {}", ws.citations.len() - 5)).dim()
+            );
         }
     }
     println!();
@@ -1041,14 +1150,34 @@ fn print_visual_pipeline(ws: &avocado_core::WorkingSet, query: &str, budget: usi
 /// Print visual pipeline from JSON (daemon mode)
 fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize) {
     // Header
-    println!("\n{}", style("╔══════════════════════════════════════════════════════════════════════════════╗").cyan());
-    println!("{}", style("║                    🥑 AvocadoDB Visual Pipeline Inspector                     ║").cyan());
-    println!("{}", style("╚══════════════════════════════════════════════════════════════════════════════╝").cyan());
+    println!(
+        "\n{}",
+        style("╔══════════════════════════════════════════════════════════════════════════════╗")
+            .cyan()
+    );
+    println!(
+        "{}",
+        style("║                    🥑 AvocadoDB Visual Pipeline Inspector                     ║")
+            .cyan()
+    );
+    println!(
+        "{}",
+        style("╚══════════════════════════════════════════════════════════════════════════════╝")
+            .cyan()
+    );
 
     // Query info
     println!("\n  {} {}", style("Query:").bold(), style(query).yellow());
-    if let Some(hash) = ws.get("manifest").and_then(|m| m.get("context_hash")).and_then(|h| h.as_str()) {
-        println!("  {} {}", style("Context Hash:").bold(), style(&hash[..hash.len().min(24)]).dim());
+    if let Some(hash) = ws
+        .get("manifest")
+        .and_then(|m| m.get("context_hash"))
+        .and_then(|h| h.as_str())
+    {
+        println!(
+            "  {} {}",
+            style("Context Hash:").bold(),
+            style(&hash[..hash.len().min(24)]).dim()
+        );
     }
     println!();
 
@@ -1056,49 +1185,96 @@ fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize
     let explain = ws.get("explain");
     let (sem_count, lex_count, fused_count, mmr_count, packed_count) = if let Some(e) = explain {
         (
-            e.get("semantic_candidates").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
-            e.get("lexical_candidates").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
-            e.get("fused_candidates").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
-            e.get("mmr_selected").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
-            e.get("packed_spans").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0),
+            e.get("semantic_candidates")
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
+            e.get("lexical_candidates")
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
+            e.get("fused_candidates")
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
+            e.get("mmr_selected")
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
+            e.get("packed_spans")
+                .and_then(|a| a.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
         )
     } else {
         (0, 0, 0, 0, 0)
     };
 
-    let final_count = ws.get("citations").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
+    let final_count = ws
+        .get("citations")
+        .and_then(|c| c.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
 
     // Timing
     let timing = explain.and_then(|e| e.get("timing"));
-    let sem_time = timing.and_then(|t| t.get("semantic_search_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let lex_time = timing.and_then(|t| t.get("lexical_search_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let fusion_time = timing.and_then(|t| t.get("fusion_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let mmr_time = timing.and_then(|t| t.get("mmr_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let pack_time = timing.and_then(|t| t.get("packing_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let total_time = timing.and_then(|t| t.get("total_ms")).and_then(|v| v.as_u64())
+    let sem_time = timing
+        .and_then(|t| t.get("semantic_search_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let lex_time = timing
+        .and_then(|t| t.get("lexical_search_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let fusion_time = timing
+        .and_then(|t| t.get("fusion_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let mmr_time = timing
+        .and_then(|t| t.get("mmr_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let pack_time = timing
+        .and_then(|t| t.get("packing_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total_time = timing
+        .and_then(|t| t.get("total_ms"))
+        .and_then(|v| v.as_u64())
         .or_else(|| ws.get("compilation_time_ms").and_then(|v| v.as_u64()))
         .unwrap_or(0);
 
     // Pipeline visualization
-    println!("  {}", style("┌─────────────────────────────────────────────────────────────────────────────┐").dim());
-    println!("  {}                              {} {}                                 {}",
+    println!(
+        "  {}",
+        style("┌─────────────────────────────────────────────────────────────────────────────┐")
+            .dim()
+    );
+    println!(
+        "  {}                              {} {}                                 {}",
         style("│").dim(),
         style("RETRIEVAL PIPELINE").bold().cyan(),
         style("(deterministic)").dim(),
         style("│").dim()
     );
-    println!("  {}", style("└─────────────────────────────────────────────────────────────────────────────┘").dim());
+    println!(
+        "  {}",
+        style("└─────────────────────────────────────────────────────────────────────────────┘")
+            .dim()
+    );
     println!();
 
     // Row 1: Semantic and Lexical search
     println!("  ┌──────────────────┐                    ┌──────────────────┐");
-    println!("  │   {} {}   │                    │   {} {}   │",
+    println!(
+        "  │   {} {}   │                    │   {} {}   │",
         style("SEMANTIC").cyan().bold(),
         style("🔍").dim(),
         style("LEXICAL").magenta().bold(),
         style("📝").dim()
     );
-    println!("  │   {} {}  │                    │   {} {}  │",
+    println!(
+        "  │   {} {}  │                    │   {} {}  │",
         style(format!("{:>4} candidates", sem_count)).white(),
         style(format!("{}ms", sem_time)).dim(),
         style(format!("{:>4} candidates", lex_count)).white(),
@@ -1113,11 +1289,13 @@ fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize
 
     // Row 2: Fusion
     println!("                    ┌──────────────────────┐");
-    println!("                    │     {} {}      │",
+    println!(
+        "                    │     {} {}      │",
         style("RRF FUSION").yellow().bold(),
         style("⚡").dim()
     );
-    println!("                    │    {} {}   │",
+    println!(
+        "                    │    {} {}   │",
         style(format!("{:>4} combined", fused_count)).white(),
         style(format!("{}ms", fusion_time)).dim()
     );
@@ -1128,11 +1306,13 @@ fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize
 
     // Row 3: MMR
     println!("                    ┌──────────────────────┐");
-    println!("                    │  {} {}   │",
+    println!(
+        "                    │  {} {}   │",
         style("MMR DIVERSITY").green().bold(),
         style("🎯").dim()
     );
-    println!("                    │    {} {}   │",
+    println!(
+        "                    │    {} {}   │",
         style(format!("{:>4} selected", mmr_count)).white(),
         style(format!("{}ms", mmr_time)).dim()
     );
@@ -1143,11 +1323,13 @@ fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize
 
     // Row 4: Packing
     println!("                    ┌──────────────────────┐");
-    println!("                    │   {} {}    │",
+    println!(
+        "                    │   {} {}    │",
         style("TOKEN PACK").blue().bold(),
         style("📦").dim()
     );
-    println!("                    │     {} {}   │",
+    println!(
+        "                    │     {} {}   │",
         style(format!("{:>4} packed", packed_count)).white(),
         style(format!("{}ms", pack_time)).dim()
     );
@@ -1158,11 +1340,13 @@ fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize
 
     // Row 5: Final output
     println!("                    ┌──────────────────────┐");
-    println!("                    │    {} {}    │",
+    println!(
+        "                    │    {} {}    │",
         style("FINAL ORDER").bold().white().on_green(),
         style("✓").green()
     );
-    println!("                    │     {} spans       │",
+    println!(
+        "                    │     {} spans       │",
         style(format!("{:>4}", final_count)).cyan().bold()
     );
     println!("                    │  (deterministic ✓)   │");
@@ -1171,23 +1355,38 @@ fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize
 
     // Summary stats
     let tokens_used = ws.get("tokens_used").and_then(|v| v.as_u64()).unwrap_or(0);
-    let utilization = if budget > 0 { (tokens_used as f32 / budget as f32 * 100.0) as usize } else { 0 };
+    let utilization = if budget > 0 {
+        (tokens_used as f32 / budget as f32 * 100.0) as usize
+    } else {
+        0
+    };
 
     println!("  {}", style("─".repeat(78)).dim());
     println!();
-    println!("  {}   {} / {} tokens ({}% utilization)",
+    println!(
+        "  {}   {} / {} tokens ({}% utilization)",
         style("Budget:").bold(),
         style(tokens_used).cyan().bold(),
         style(budget).dim(),
         style(utilization).yellow()
     );
-    println!("  {}     {}ms total {}",
+    println!(
+        "  {}     {}ms total {}",
         style("Time:").bold(),
         style(total_time).cyan().bold(),
-        if total_time < 500 { style("(fast ✓)").green() } else { style("(consider caching)").yellow() }
+        if total_time < 500 {
+            style("(fast ✓)").green()
+        } else {
+            style("(consider caching)").yellow()
+        }
     );
-    if let Some(hash) = ws.get("manifest").and_then(|m| m.get("context_hash")).and_then(|h| h.as_str()) {
-        println!("  {}  {} (same query → same results)",
+    if let Some(hash) = ws
+        .get("manifest")
+        .and_then(|m| m.get("context_hash"))
+        .and_then(|h| h.as_str())
+    {
+        println!(
+            "  {}  {} (same query → same results)",
             style("Hash:").bold(),
             style(&hash[..hash.len().min(32)]).dim()
         );
@@ -1199,17 +1398,24 @@ fn print_visual_pipeline_json(ws: &serde_json::Value, query: &str, budget: usize
         if !citations.is_empty() {
             println!("  {} (top 5):", style("Citations").bold());
             for (i, cite) in citations.iter().take(5).enumerate() {
-                let path = cite.get("artifact_path").and_then(|p| p.as_str()).unwrap_or("?");
+                let path = cite
+                    .get("artifact_path")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("?");
                 let start = cite.get("start_line").and_then(|l| l.as_u64()).unwrap_or(0);
                 let end = cite.get("end_line").and_then(|l| l.as_u64()).unwrap_or(0);
-                println!("    {}. {} {}",
+                println!(
+                    "    {}. {} {}",
                     style(i + 1).dim(),
                     style(path).cyan(),
                     style(format!(":{}–{}", start, end)).dim()
                 );
             }
             if citations.len() > 5 {
-                println!("    {} more...", style(format!("... and {}", citations.len() - 5)).dim());
+                println!(
+                    "    {} more...",
+                    style(format!("... and {}", citations.len() - 5)).dim()
+                );
             }
         }
     }

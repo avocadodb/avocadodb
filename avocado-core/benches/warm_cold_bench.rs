@@ -1,8 +1,8 @@
 use avocado_core::{compiler, db::Database, embedding, span, CompilerConfig};
 use criterion::{criterion_group, criterion_main, Criterion};
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 use tokio::runtime::Runtime;
+use uuid::Uuid;
 
 fn build_corpus(db: &Database, num_docs: usize, lines_per_doc: usize) {
     for i in 0..num_docs {
@@ -10,7 +10,11 @@ fn build_corpus(db: &Database, num_docs: usize, lines_per_doc: usize) {
         let mut content = String::new();
         content.push_str("# AvocadoDB Bench Doc\n");
         for l in 0..lines_per_doc {
-            content.push_str(&format!("Line {} in doc {}: Deterministic RAG with MMR and hybrid search.\n", l + 1, i));
+            content.push_str(&format!(
+                "Line {} in doc {}: Deterministic RAG with MMR and hybrid search.\n",
+                l + 1,
+                i
+            ));
         }
         let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
         let artifact = avocado_core::Artifact {
@@ -21,7 +25,8 @@ fn build_corpus(db: &Database, num_docs: usize, lines_per_doc: usize) {
             metadata: None,
             created_at: chrono::Utc::now(),
         };
-        db.insert_artifact(&artifact).expect("insert_artifact failed");
+        db.insert_artifact(&artifact)
+            .expect("insert_artifact failed");
 
         let mut spans = span::extract_spans(&content, &artifact_id).expect("extract_spans failed");
         let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
@@ -84,4 +89,3 @@ fn bench_warm_cold(c: &mut Criterion) {
 
 criterion_group!(benches, bench_warm_cold);
 criterion_main!(benches);
-

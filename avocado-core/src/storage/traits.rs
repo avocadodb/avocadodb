@@ -96,11 +96,8 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_artifact(&self, artifact_id: &str) -> Result<usize>;
 
     /// Determine what action to take when ingesting a file
-    async fn determine_ingest_action(
-        &self,
-        path: &str,
-        content_hash: &str,
-    ) -> Result<IngestAction>;
+    async fn determine_ingest_action(&self, path: &str, content_hash: &str)
+        -> Result<IngestAction>;
 
     // ========== Spans ==========
 
@@ -127,11 +124,7 @@ pub trait StorageBackend: Send + Sync {
     // ========== Sessions ==========
 
     /// Create a new session
-    async fn create_session(
-        &self,
-        user_id: Option<&str>,
-        title: Option<&str>,
-    ) -> Result<Session>;
+    async fn create_session(&self, user_id: Option<&str>, title: Option<&str>) -> Result<Session>;
 
     /// Get session by ID
     async fn get_session(&self, session_id: &str) -> Result<Option<Session>>;
@@ -166,11 +159,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Message>;
 
     /// Get messages for session
-    async fn get_messages(
-        &self,
-        session_id: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<Message>>;
+    async fn get_messages(&self, session_id: &str, limit: Option<usize>) -> Result<Vec<Message>>;
 
     // ========== Working Sets ==========
 

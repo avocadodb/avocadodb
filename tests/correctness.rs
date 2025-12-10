@@ -54,7 +54,10 @@ async fn test_token_budget_respected() {
         budget
     );
 
-    println!("✅ Token budget respected: {}/{}", result.tokens_used, budget);
+    println!(
+        "✅ Token budget respected: {}/{}",
+        result.tokens_used, budget
+    );
 }
 
 #[tokio::test]
@@ -157,8 +160,7 @@ async fn test_span_token_counts() {
         let chars = span.text.len();
         let estimated_tokens = chars / 4;
         assert!(
-            span.token_count >= estimated_tokens / 2
-                && span.token_count <= estimated_tokens * 2,
+            span.token_count >= estimated_tokens / 2 && span.token_count <= estimated_tokens * 2,
             "Token count seems wrong: {} tokens for {} chars",
             span.token_count,
             chars

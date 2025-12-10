@@ -12,11 +12,11 @@ use avocado_core::db::Database;
 use avocado_core::index::VectorIndex;
 use avocado_core::session::SessionManager;
 use avocado_core::types::{CompilerConfig, MessageRole};
-use std::path::PathBuf;
-use tempfile::TempDir;
-use std::sync::Arc;
 use avocado_core::{span, Artifact};
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tempfile::TempDir;
 use uuid::Uuid;
 
 /// Test environment helper
@@ -65,7 +65,8 @@ async fn ingest_text(db: &Database, path: &str, content: &str) {
         metadata: None,
         created_at: chrono::Utc::now(),
     };
-    db.insert_artifact(&artifact).expect("insert_artifact failed");
+    db.insert_artifact(&artifact)
+        .expect("insert_artifact failed");
     let mut spans = span::extract_spans(content, &artifact_id).expect("extract_spans failed");
     let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
     let embeddings = avocado_core::embedding::embed_batch(texts, None, None)
@@ -247,11 +248,7 @@ async fn test_long_conversation_history() {
             .expect("Failed to add user message");
 
         env.session_manager
-            .add_assistant_message(
-                &session.id,
-                &format!("Assistant response {}", i),
-                None,
-            )
+            .add_assistant_message(&session.id, &format!("Assistant response {}", i), None)
             .expect("Failed to add assistant message");
     }
 
@@ -457,15 +454,24 @@ fn test_session_list_filtering() {
         .expect("Failed to create session");
 
     // List all sessions
-    let all_sessions = env.db.list_sessions(None, None).expect("Failed to list sessions");
+    let all_sessions = env
+        .db
+        .list_sessions(None, None)
+        .expect("Failed to list sessions");
     assert_eq!(all_sessions.len(), 3);
 
     // List Alice's sessions
-    let alice_sessions = env.db.list_sessions(Some("alice"), None).expect("Failed to list Alice's sessions");
+    let alice_sessions = env
+        .db
+        .list_sessions(Some("alice"), None)
+        .expect("Failed to list Alice's sessions");
     assert_eq!(alice_sessions.len(), 2);
 
     // List with limit
-    let limited_sessions = env.db.list_sessions(None, Some(2)).expect("Failed to list limited sessions");
+    let limited_sessions = env
+        .db
+        .list_sessions(None, Some(2))
+        .expect("Failed to list limited sessions");
     assert_eq!(limited_sessions.len(), 2);
 }
 
@@ -523,7 +529,10 @@ async fn test_concurrent_message_additions() {
 
     // Wait for all to complete
     for handle in handles {
-        handle.await.expect("Task panicked").expect("Failed to add message");
+        handle
+            .await
+            .expect("Task panicked")
+            .expect("Failed to add message");
     }
 
     // Verify all messages were added
@@ -538,7 +547,11 @@ async fn test_concurrent_message_additions() {
     let mut sequence_numbers: Vec<usize> = messages.iter().map(|m| m.sequence_number).collect();
     sequence_numbers.sort();
     sequence_numbers.dedup();
-    assert_eq!(sequence_numbers.len(), 10, "Sequence numbers should be unique");
+    assert_eq!(
+        sequence_numbers.len(),
+        10,
+        "Sequence numbers should be unique"
+    );
 }
 
 #[tokio::test]

@@ -79,15 +79,15 @@ async fn test_compilation_performance() {
     // Token utilization depends on available relevant content
     // Since we only embed every 10th document, we have limited semantic matches
     // So we just verify we're using some tokens (not checking for high utilization)
-    assert!(
-        result.tokens_used > 0,
-        "No tokens used in compilation"
-    );
-    
+    assert!(result.tokens_used > 0, "No tokens used in compilation");
+
     // With limited embeddings, we expect lower utilization, but should still use some tokens
     // In a real scenario with all documents embedded, utilization would be >87.5%
-    println!("Token utilization: {}/8000 ({}%) - lower due to limited embeddings in test", 
-             result.tokens_used, (result.tokens_used * 100) / 8000);
+    println!(
+        "Token utilization: {}/8000 ({}%) - lower due to limited embeddings in test",
+        result.tokens_used,
+        (result.tokens_used * 100) / 8000
+    );
 
     println!("✅ Passed performance test");
 }

@@ -4,21 +4,24 @@
 //! Each project has its own database and in-memory HNSW index.
 
 use avocado_core::{
-    compiler, db::Database, embedding, session::SessionManager, span,
-    storage::SqliteBackend, Artifact, CompilerConfig, Message, MessageRole, Session, VERSION,
+    compiler, db::Database, embedding, session::SessionManager, span, storage::SqliteBackend,
+    Artifact, CompilerConfig, Message, MessageRole, Session, VERSION,
 };
+use axum::middleware;
 use axum::{
     extract::{Json, Path, Query, State},
     http::{header, Method, StatusCode},
     routing::{delete, get, post},
     Router,
 };
-use axum::middleware;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
@@ -49,10 +52,14 @@ impl ProjectIndex {
     /// The backend is lazily created from the Database on first access.
     #[allow(dead_code)]
     pub async fn get_backend(&self) -> Result<&SqliteBackend, anyhow::Error> {
-        self.backend.get_or_try_init(|| async {
-            self.database.as_storage_backend().await
-                .map_err(|e| anyhow::anyhow!("Failed to create storage backend: {}", e))
-        }).await
+        self.backend
+            .get_or_try_init(|| async {
+                self.database
+                    .as_storage_backend()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create storage backend: {}", e))
+            })
+            .await
     }
 }
 
@@ -102,8 +109,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CorsLayer::permissive()
     } else {
         // Production-ready CORS with configurable origins
-        let cors_origins = std::env::var("CORS_ALLOWED_ORIGINS")
-            .unwrap_or_else(|_| "http://localhost:3000,http://localhost:8080,http://localhost:8765".to_string());
+        let cors_origins = std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_else(|_| {
+            "http://localhost:3000,http://localhost:8080,http://localhost:8765".to_string()
+        });
 
         let origins: Vec<_> = cors_origins
             .split(',')
@@ -161,7 +169,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(SwaggerUi::new("/api-docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(cors)
         .layer(RequestBodyLimitLayer::new(max_body_bytes))
-        .layer(middleware::from_fn_with_state(Arc::clone(&state), auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            auth_middleware,
+        ))
         .with_state(state);
 
     // Start server
@@ -170,9 +181,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1".to_string());
     let addr = format!("{}:{}", bind_addr, port);
     println!("🥑 AvocadoDB v{} listening on http://{}", VERSION, addr);
-    println!("   Multi-project server with LRU caching (max {} projects)", MAX_PROJECTS_IN_MEMORY);
-    println!("   API Documentation: http://{}/api-docs", addr.replace("0.0.0.0", "localhost"));
-    println!("   OpenAPI Spec: http://{}/api-docs/openapi.json", addr.replace("0.0.0.0", "localhost"));
+    println!(
+        "   Multi-project server with LRU caching (max {} projects)",
+        MAX_PROJECTS_IN_MEMORY
+    );
+    println!(
+        "   API Documentation: http://{}/api-docs",
+        addr.replace("0.0.0.0", "localhost")
+    );
+    println!(
+        "   OpenAPI Spec: http://{}/api-docs/openapi.json",
+        addr.replace("0.0.0.0", "localhost")
+    );
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -286,7 +306,11 @@ impl ErrorResponse {
     }
 
     #[allow(dead_code)]
-    fn with_details(error: impl Into<String>, code: impl Into<String>, details: serde_json::Value) -> Self {
+    fn with_details(
+        error: impl Into<String>,
+        code: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
         Self {
             error: error.into(),
             code: Some(code.into()),
@@ -440,10 +464,7 @@ struct WorkingSetOut {
     explain: Option<avocado_core::ExplainPlan>,
 }
 
-fn enrich_working_set(
-    ws: &avocado_core::WorkingSet,
-    db: &Database,
-) -> WorkingSetOut {
+fn enrich_working_set(ws: &avocado_core::WorkingSet, db: &Database) -> WorkingSetOut {
     // Build a small cache of artifact_id -> path
     use std::collections::HashMap;
     let mut path_cache: HashMap<String, String> = HashMap::new();
@@ -452,34 +473,38 @@ fn enrich_working_set(
         path_cache.insert(c.artifact_id.clone(), c.artifact_path.clone());
     }
 
-    let spans_out: Vec<SpanOut> = ws.spans.iter().map(|s| {
-        // Lookup path from cache or DB
-        let artifact_path = if let Some(p) = path_cache.get(&s.artifact_id) {
-            p.clone()
-        } else {
-            match db.get_artifact(&s.artifact_id) {
-                Ok(opt) => {
-                    let p = opt.map(|a| a.path).unwrap_or_else(|| "unknown".to_string());
-                    path_cache.insert(s.artifact_id.clone(), p.clone());
-                    p
+    let spans_out: Vec<SpanOut> = ws
+        .spans
+        .iter()
+        .map(|s| {
+            // Lookup path from cache or DB
+            let artifact_path = if let Some(p) = path_cache.get(&s.artifact_id) {
+                p.clone()
+            } else {
+                match db.get_artifact(&s.artifact_id) {
+                    Ok(opt) => {
+                        let p = opt.map(|a| a.path).unwrap_or_else(|| "unknown".to_string());
+                        path_cache.insert(s.artifact_id.clone(), p.clone());
+                        p
+                    }
+                    Err(_) => "unknown".to_string(),
                 }
-                Err(_) => "unknown".to_string(),
-            }
-        };
+            };
 
-        SpanOut {
-            id: s.id.clone(),
-            artifact_id: s.artifact_id.clone(),
-            artifact_path,
-            start_line: s.start_line,
-            end_line: s.end_line,
-            text: s.text.clone(),
-            token_count: s.token_count,
-            embedding_model: s.embedding_model.clone(),
-            metadata: s.metadata.clone(),
-            score: None,
-        }
-    }).collect();
+            SpanOut {
+                id: s.id.clone(),
+                artifact_id: s.artifact_id.clone(),
+                artifact_path,
+                start_line: s.start_line,
+                end_line: s.end_line,
+                text: s.text.clone(),
+                token_count: s.token_count,
+                embedding_model: s.embedding_model.clone(),
+                metadata: s.metadata.clone(),
+                score: None,
+            }
+        })
+        .collect();
 
     WorkingSetOut {
         text: ws.text.clone(),
@@ -540,7 +565,9 @@ async fn compile_handler(
     state.compile_count.fetch_add(1, Ordering::Relaxed);
     state.total_compile_ms.fetch_add(elapsed, Ordering::Relaxed);
 
-    Ok(Json(CompileResponse { working_set: ws_out }))
+    Ok(Json(CompileResponse {
+        working_set: ws_out,
+    }))
 }
 
 async fn ingest_handler(
@@ -755,7 +782,11 @@ async fn metrics_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let compile_count = state.compile_count.load(Ordering::Relaxed);
     let total_ms = state.total_compile_ms.load(Ordering::Relaxed);
-    let avg_ms = if compile_count > 0 { total_ms / compile_count } else { 0 };
+    let avg_ms = if compile_count > 0 {
+        total_ms / compile_count
+    } else {
+        0
+    };
     let metrics = serde_json::json!({
         "compile_count": compile_count,
         "total_compile_ms": total_ms,
@@ -787,7 +818,7 @@ async fn get_or_load_project(
 
     // Need to load the project
     let db_path = project_path.join(".avocado/db.sqlite");
-    
+
     // Create database if it doesn't exist
     if !db_path.exists() {
         std::fs::create_dir_all(db_path.parent().unwrap())?;
@@ -806,10 +837,14 @@ async fn get_or_load_project(
     match load_kind {
         avocado_core::db::IndexLoadKind::LoadedFromCache => {
             // Reuse total_compile_ms to avoid growing struct too much; append to it for now
-            state.total_compile_ms.fetch_add(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
+            state
+                .total_compile_ms
+                .fetch_add(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
         }
         avocado_core::db::IndexLoadKind::BuiltFromSpans => {
-            state.total_compile_ms.fetch_add(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
+            state
+                .total_compile_ms
+                .fetch_add(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
         }
         avocado_core::db::IndexLoadKind::CachedInMemory => {}
     }
@@ -828,7 +863,7 @@ async fn get_or_load_project(
     // Insert into cache (with LRU eviction)
     {
         let mut projects = state.projects.write().await;
-        
+
         // Evict least recently used if at capacity
         if projects.len() >= MAX_PROJECTS_IN_MEMORY {
             evict_lru_project(&mut projects).await;
@@ -892,7 +927,10 @@ async fn auth_middleware(
         return Ok(next.run(req).await);
     }
     let token = state.api_token.as_ref().unwrap();
-    let header = req.headers().get("x-avocado-token").and_then(|h| h.to_str().ok());
+    let header = req
+        .headers()
+        .get("x-avocado-token")
+        .and_then(|h| h.to_str().ok());
     if header != Some(token.as_str()) {
         return Err((
             StatusCode::UNAUTHORIZED,
@@ -998,7 +1036,9 @@ async fn create_session_handler(
             .map_err(|e| internal_error(e.to_string()))?
             .ok_or_else(|| internal_error("Session not found after creation".to_string()))?;
 
-        return Ok(Json(CreateSessionResponse { session: updated_session }));
+        return Ok(Json(CreateSessionResponse {
+            session: updated_session,
+        }));
     }
 
     Ok(Json(CreateSessionResponse { session }))
@@ -1081,13 +1121,18 @@ async fn add_message_handler(
         "assistant" => MessageRole::Assistant,
         "system" => MessageRole::System,
         "tool" => MessageRole::Tool,
-        _ => return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse::with_code(
-                format!("Invalid role: {}. Must be one of: user, assistant, system, tool", req.role),
-                "INVALID_ROLE"
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::with_code(
+                    format!(
+                        "Invalid role: {}. Must be one of: user, assistant, system, tool",
+                        req.role
+                    ),
+                    "INVALID_ROLE",
+                )),
             ))
-        )),
+        }
     };
 
     let message = project_index
@@ -1119,7 +1164,10 @@ async fn session_compile_handler(
         .get_session(&session_id)
         .map_err(|e| internal_error(e.to_string()))?;
     if maybe_session.is_none() {
-        return Err(not_found_error(format!("Session not found: {}", session_id)));
+        return Err(not_found_error(format!(
+            "Session not found: {}",
+            session_id
+        )));
     }
 
     // Add user message and compile
@@ -1145,7 +1193,10 @@ async fn session_compile_handler(
         })?;
 
     let ws_out = enrich_working_set(&working_set, &project_index.database);
-    Ok(Json(SessionCompileResponse { message, working_set: ws_out }))
+    Ok(Json(SessionCompileResponse {
+        message,
+        working_set: ws_out,
+    }))
 }
 
 async fn session_history_handler(
@@ -1154,7 +1205,9 @@ async fn session_history_handler(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<ConversationHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
     let project = params.get("project").cloned();
-    let max_tokens = params.get("max_tokens").and_then(|s| s.parse::<usize>().ok());
+    let max_tokens = params
+        .get("max_tokens")
+        .and_then(|s| s.parse::<usize>().ok());
 
     let project_index = get_or_load_project(&state, &project)
         .await
@@ -1262,8 +1315,12 @@ async fn add_agent_relation_handler(
         .map_err(|e| internal_error(e.to_string()))?;
 
     // Parse stance
-    let stance = avocado_core::Stance::from_str(&req.stance)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse::with_code(e, "INVALID_STANCE"))))?;
+    let stance = avocado_core::Stance::from_str(&req.stance).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::with_code(e, "INVALID_STANCE")),
+        )
+    })?;
 
     let relation = project_index
         .database

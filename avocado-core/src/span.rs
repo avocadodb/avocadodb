@@ -43,12 +43,7 @@ pub fn extract_spans(content: &str, artifact_id: &str) -> Result<Vec<Span>> {
         current_lines.push(*line);
 
         // Determine if we should create a span at this point
-        let should_split = should_create_span(
-            &current_lines,
-            line,
-            idx,
-            lines.len(),
-        );
+        let should_split = should_create_span(&current_lines, line, idx, lines.len());
 
         if should_split && !current_lines.is_empty() {
             let text = current_lines.join("\n");
@@ -113,12 +108,7 @@ pub fn extract_spans(content: &str, artifact_id: &str) -> Result<Vec<Span>> {
 /// - Section headers (# markdown, == rst, etc.)
 /// - Target span size (20-50 lines)
 /// - Minimum span size (avoid tiny spans)
-fn should_create_span(
-    current_lines: &[&str],
-    line: &str,
-    idx: usize,
-    total_lines: usize,
-) -> bool {
+fn should_create_span(current_lines: &[&str], line: &str, idx: usize, total_lines: usize) -> bool {
     let num_lines = current_lines.len();
 
     // Always split at end of document
@@ -156,10 +146,10 @@ fn should_create_span(
         if line.trim().is_empty() || is_header || is_code_fence {
             return true;
         }
-        
+
         // Detect function/class definitions (common in code)
         let trimmed = line.trim();
-        let is_definition = trimmed.starts_with("def ") 
+        let is_definition = trimmed.starts_with("def ")
             || trimmed.starts_with("class ")
             || trimmed.starts_with("function ")
             || trimmed.starts_with("pub fn ")
@@ -189,7 +179,11 @@ fn is_section_header(line: &str) -> bool {
     }
 
     // ReStructuredText style headers: underlines with =, -, ~, etc.
-    if trimmed.len() > 2 && trimmed.chars().all(|c| c == '=' || c == '-' || c == '~' || c == '^') {
+    if trimmed.len() > 2
+        && trimmed
+            .chars()
+            .all(|c| c == '=' || c == '-' || c == '~' || c == '^')
+    {
         return true;
     }
 
@@ -247,9 +241,15 @@ mod tests {
 
     #[test]
     fn test_extract_spans_with_paragraphs() {
-        let content = (0..25).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n")
+        let content = (0..25)
+            .map(|i| format!("Line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n")
             + "\n\n"
-            + &(25..50).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n");
+            + &(25..50)
+                .map(|i| format!("Line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n");
 
         let spans = extract_spans(&content, "test-artifact").unwrap();
 
@@ -264,7 +264,10 @@ mod tests {
 
     #[test]
     fn test_no_overlapping_spans() {
-        let content = (0..100).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..100)
+            .map(|i| format!("Line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         let spans = extract_spans(&content, "test-artifact").unwrap();
 
         // Verify no gaps or overlaps

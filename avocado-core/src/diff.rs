@@ -28,7 +28,12 @@ pub fn diff_working_sets(before: &WorkingSet, after: &WorkingSet) -> WorkingSetD
         .map(|(rank, c)| {
             (
                 c.span_id.as_str(),
-                (rank + 1, c.score, c.artifact_path.as_str(), (c.start_line, c.end_line)),
+                (
+                    rank + 1,
+                    c.score,
+                    c.artifact_path.as_str(),
+                    (c.start_line, c.end_line),
+                ),
             )
         })
         .collect();
@@ -40,7 +45,12 @@ pub fn diff_working_sets(before: &WorkingSet, after: &WorkingSet) -> WorkingSetD
         .map(|(rank, c)| {
             (
                 c.span_id.as_str(),
-                (rank + 1, c.score, c.artifact_path.as_str(), (c.start_line, c.end_line)),
+                (
+                    rank + 1,
+                    c.score,
+                    c.artifact_path.as_str(),
+                    (c.start_line, c.end_line),
+                ),
             )
         })
         .collect();
@@ -151,7 +161,11 @@ mod tests {
             .collect();
 
         WorkingSet {
-            text: cites.iter().map(|c| c.artifact_path.as_str()).collect::<Vec<_>>().join(","),
+            text: cites
+                .iter()
+                .map(|c| c.artifact_path.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
             spans: vec![],
             citations: cites,
             tokens_used: 100,

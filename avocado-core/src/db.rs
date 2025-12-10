@@ -3,14 +3,17 @@
 //! This module handles all database interactions using rusqlite.
 //! SQLite is sufficient for Phase 1 (can handle 10K+ documents easily).
 
-use crate::types::{Artifact, Result, Span, Session, Message, MessageRole, SessionWorkingSet, SessionWithMessages, WorkingSet, CompilerConfig};
 use crate::index::VectorIndex;
+use crate::types::{
+    Artifact, CompilerConfig, Message, MessageRole, Result, Session, SessionWithMessages,
+    SessionWorkingSet, Span, WorkingSet,
+};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use sha2::{Digest, Sha256};
-use serde::{Serialize, Deserialize};
 
 /// Database connection wrapper with thread-safe access
 #[derive(Clone)]
@@ -207,8 +210,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Ok(()) if successful
     pub fn insert_artifact(&self, artifact: &Artifact) -> Result<()> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
         conn.execute(
             "INSERT INTO artifacts (id, path, content, content_hash, metadata, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -238,8 +242,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Ok(()) if successful
     pub fn insert_spans(&self, spans: &[Span]) -> Result<()> {
-        let mut conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let mut conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
         let tx = conn.transaction()?;
 
         for span in spans {
@@ -290,16 +295,17 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         // Check if index needs rebuilding
         if self.index_dirty.load(Ordering::Acquire) {
             // Ensure only one thread builds/loads at a time for this database
-            let _guard = self.build_lock.lock()
-                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Build lock poisoned: {}", e)))?;
+            let _guard = self.build_lock.lock().map_err(|e| {
+                crate::types::Error::Other(anyhow::anyhow!("Build lock poisoned: {}", e))
+            })?;
             // Re-check after acquiring lock in case another thread already built it
             if !self.index_dirty.load(Ordering::Acquire) {
-                let cached = self.vector_index.read()
-                    .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
-                let idx = cached.as_ref()
-                    .cloned()
-                    .ok_or_else(|| crate::types::Error::Other(anyhow::anyhow!("Index cache empty after build")))?
-                    ;
+                let cached = self.vector_index.read().map_err(|e| {
+                    crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e))
+                })?;
+                let idx = cached.as_ref().cloned().ok_or_else(|| {
+                    crate::types::Error::Other(anyhow::anyhow!("Index cache empty after build"))
+                })?;
                 return Ok((idx, IndexLoadKind::CachedInMemory));
             }
             // Try to load from disk first (Phase 2.1 persistent index)
@@ -308,44 +314,49 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                 // Index loaded successfully from cache
                 // Note: We still rebuild HNSW from cached spans due to lifetime constraints in hnsw_rs
                 // This is faster than loading from SQLite, but not as fast as loading HNSW structure directly
-                let mut cached = self.vector_index.write()
-                    .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
+                let mut cached = self.vector_index.write().map_err(|e| {
+                    crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e))
+                })?;
                 *cached = Some(index.clone());
                 self.index_dirty.store(false, Ordering::Release);
                 return Ok((index, IndexLoadKind::LoadedFromCache));
             }
-            
+
             // Build index from spans (load from SQLite)
             // For large repos, this can take 1-2 minutes
             let spans = self.get_all_spans()?;
             let index = Arc::new(VectorIndex::build(spans));
-            
+
             // Save to disk for next time (Phase 2.1)
             // This saves both HNSW dump files and spans cache
             // Note: HNSW structure can't be directly loaded due to lifetime constraints,
             // but caching spans still provides significant speedup (avoids SQLite queries)
             let _ = self.save_index_to_disk(&cache_dir, &index);
-            
+
             // Update cache
-            let mut cached = self.vector_index.write()
-                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
+            let mut cached = self.vector_index.write().map_err(|e| {
+                crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e))
+            })?;
             *cached = Some(index.clone());
-            
+
             // Mark as clean
             self.index_dirty.store(false, Ordering::Release);
-            
+
             Ok((index, IndexLoadKind::BuiltFromSpans))
         } else {
             // Return cached index
-            let cached = self.vector_index.read()
-                .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
-            let idx = cached.as_ref()
-                .cloned()
-                .ok_or_else(|| crate::types::Error::Other(anyhow::anyhow!("Index cache is None but not dirty - this should not happen")))?;
+            let cached = self.vector_index.read().map_err(|e| {
+                crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e))
+            })?;
+            let idx = cached.as_ref().cloned().ok_or_else(|| {
+                crate::types::Error::Other(anyhow::anyhow!(
+                    "Index cache is None but not dirty - this should not happen"
+                ))
+            })?;
             Ok((idx, IndexLoadKind::CachedInMemory))
         }
     }
-    
+
     /// Get the path to the index cache directory
     fn get_index_cache_dir(&self) -> PathBuf {
         // Store index cache in a directory next to database: db.sqlite -> db.sqlite.idx/
@@ -353,7 +364,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         cache_dir.set_extension("sqlite.idx");
         cache_dir
     }
-    
+
     /// Calculate a hash of all spans to detect changes
     fn calculate_spans_hash(&self) -> Result<String> {
         let spans = self.get_all_spans()?;
@@ -366,7 +377,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         }
         Ok(format!("{:x}", hasher.finalize()))
     }
-    
+
     /// Load index from disk if valid
     fn load_index_from_disk(&self, cache_dir: &Path) -> Result<Arc<VectorIndex>> {
         // Try to load using VectorIndex::load_from_disk
@@ -383,23 +394,28 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                     }
                 }
                 let cached_hash = format!("{:x}", hasher.finalize());
-                
+
                 if cached_hash == current_hash {
                     Ok(Arc::new(index))
                 } else {
-                    Err(crate::types::Error::NotFound("Index cache is stale".to_string()))
+                    Err(crate::types::Error::NotFound(
+                        "Index cache is stale".to_string(),
+                    ))
                 }
             }
-            Ok(None) => Err(crate::types::Error::NotFound("Index cache not found".to_string())),
+            Ok(None) => Err(crate::types::Error::NotFound(
+                "Index cache not found".to_string(),
+            )),
             Err(e) => Err(e),
         }
     }
-    
+
     /// Save index to disk for persistence
     fn save_index_to_disk(&self, cache_dir: &Path, index: &VectorIndex) -> Result<()> {
         // Use VectorIndex::save_to_disk which saves both HNSW dump and spans
-        index.save_to_disk(cache_dir)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Failed to save index to disk: {}", e)))?;
+        index.save_to_disk(cache_dir).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Failed to save index to disk: {}", e))
+        })?;
         Ok(())
     }
 
@@ -409,8 +425,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Vector of all spans
     pub fn get_all_spans(&self) -> Result<Vec<Span>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
         let mut stmt = conn.prepare(
             "SELECT id, artifact_id, start_line, end_line, text,
                     embedding, embedding_model, token_count, metadata
@@ -450,8 +467,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// The artifact if found
     pub fn get_artifact(&self, artifact_id: &str) -> Result<Option<Artifact>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
         let mut stmt = conn.prepare(
             "SELECT id, path, content, content_hash, metadata, created_at
              FROM artifacts WHERE id = ?1",
@@ -482,8 +500,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Returns the artifact row matching the unique path, if present.
     pub fn get_artifact_by_path(&self, path: &str) -> Result<Option<Artifact>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
         let mut stmt = conn.prepare(
             "SELECT id, path, content, content_hash, metadata, created_at
              FROM artifacts WHERE path = ?1",
@@ -524,7 +543,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     /// - `IngestAction::Skip` if document exists with same content hash
     /// - `IngestAction::Update` if document exists but content changed
     /// - `IngestAction::Create` if document doesn't exist
-    pub fn determine_ingest_action(&self, path: &str, content_hash: &str) -> Result<crate::types::IngestAction> {
+    pub fn determine_ingest_action(
+        &self,
+        path: &str,
+        content_hash: &str,
+    ) -> Result<crate::types::IngestAction> {
         match self.get_artifact_by_path(path)? {
             Some(existing) => {
                 if existing.content_hash == content_hash {
@@ -552,8 +575,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Number of spans deleted
     pub fn delete_artifact(&self, artifact_id: &str) -> Result<usize> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         // Delete spans first (FK constraint allows CASCADE but let's be explicit)
         let spans_deleted = conn.execute(
@@ -562,13 +586,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         )?;
 
         // Delete artifact
-        conn.execute(
-            "DELETE FROM artifacts WHERE id = ?1",
-            params![artifact_id],
-        )?;
+        conn.execute("DELETE FROM artifacts WHERE id = ?1", params![artifact_id])?;
 
         // Mark index as dirty
-        self.index_dirty.store(true, std::sync::atomic::Ordering::Release);
+        self.index_dirty
+            .store(true, std::sync::atomic::Ordering::Release);
 
         // Invalidate disk cache
         let cache_dir = self.db_path.with_extension("sqlite.idx");
@@ -590,8 +612,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Vector of matching spans
     pub fn search_spans(&self, query: &str, limit: usize) -> Result<Vec<Span>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
         let mut stmt = conn.prepare(
             "SELECT id, artifact_id, start_line, end_line, text,
                     embedding, embedding_model, token_count, metadata
@@ -630,19 +653,21 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// (artifacts_count, spans_count, total_tokens)
     pub fn get_stats(&self) -> Result<(usize, usize, usize)> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
-
-        let artifacts_count: i64 = conn.query_row("SELECT COUNT(*) FROM artifacts", [], |row| {
-            row.get(0)
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
         })?;
 
-        let spans_count: i64 = conn.query_row("SELECT COUNT(*) FROM spans", [], |row| row.get(0))?;
+        let artifacts_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM artifacts", [], |row| row.get(0))?;
 
-        let total_tokens: i64 = conn
-            .query_row("SELECT COALESCE(SUM(token_count), 0) FROM spans", [], |row| {
-                row.get(0)
-            })?;
+        let spans_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM spans", [], |row| row.get(0))?;
+
+        let total_tokens: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(token_count), 0) FROM spans",
+            [],
+            |row| row.get(0),
+        )?;
 
         Ok((
             artifacts_count as usize,
@@ -653,13 +678,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
 
     /// Clear all data from the database
     pub fn clear(&self) -> Result<()> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
         conn.execute("DELETE FROM spans", [])?;
         conn.execute("DELETE FROM artifacts", [])?;
         // Clear cached index
-        let mut cached = self.vector_index.write()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e)))?;
+        let mut cached = self.vector_index.write().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Index lock poisoned: {}", e))
+        })?;
         *cached = None;
         self.index_dirty.store(true, Ordering::Release);
         // Delete index cache directory
@@ -680,8 +707,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// The newly created session
     pub fn create_session(&self, user_id: Option<&str>, title: Option<&str>) -> Result<Session> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
@@ -721,31 +749,38 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// The session if found
     pub fn get_session(&self, session_id: &str) -> Result<Option<Session>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut stmt = conn.prepare(
             "SELECT id, user_id, title, metadata, created_at, updated_at, last_message_at
              FROM sessions WHERE id = ?1",
         )?;
 
-        let session = stmt.query_row(params![session_id], |row| {
-            Ok(Session {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                metadata: row.get::<_, Option<String>>(3)?
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                created_at: row.get::<_, String>(4)?
-                    .parse()
-                    .unwrap_or_else(|_| chrono::Utc::now()),
-                updated_at: row.get::<_, String>(5)?
-                    .parse()
-                    .unwrap_or_else(|_| chrono::Utc::now()),
-                last_message_at: row.get::<_, Option<String>>(6)?
-                    .and_then(|s| s.parse().ok()),
+        let session = stmt
+            .query_row(params![session_id], |row| {
+                Ok(Session {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    title: row.get(2)?,
+                    metadata: row
+                        .get::<_, Option<String>>(3)?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    created_at: row
+                        .get::<_, String>(4)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    updated_at: row
+                        .get::<_, String>(5)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    last_message_at: row
+                        .get::<_, Option<String>>(6)?
+                        .and_then(|s| s.parse().ok()),
+                })
             })
-        }).optional()?;
+            .optional()?;
 
         Ok(session)
     }
@@ -760,9 +795,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     /// # Returns
     ///
     /// Vector of sessions, sorted by updated_at descending
-    pub fn list_sessions(&self, user_id: Option<&str>, limit: Option<usize>) -> Result<Vec<Session>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+    pub fn list_sessions(
+        &self,
+        user_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Session>> {
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let limit_val = limit.unwrap_or(100) as i64;
 
@@ -773,7 +813,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                 "SELECT id, user_id, title, metadata, created_at, updated_at, last_message_at
                  FROM sessions WHERE user_id = ?1
                  ORDER BY updated_at DESC
-                 LIMIT ?2"
+                 LIMIT ?2",
             )?;
 
             let rows = stmt.query_map(params![uid, limit_val], |row| {
@@ -781,15 +821,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                     id: row.get(0)?,
                     user_id: row.get(1)?,
                     title: row.get(2)?,
-                    metadata: row.get::<_, Option<String>>(3)?
+                    metadata: row
+                        .get::<_, Option<String>>(3)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
-                    created_at: row.get::<_, String>(4)?
+                    created_at: row
+                        .get::<_, String>(4)?
                         .parse()
                         .unwrap_or_else(|_| chrono::Utc::now()),
-                    updated_at: row.get::<_, String>(5)?
+                    updated_at: row
+                        .get::<_, String>(5)?
                         .parse()
                         .unwrap_or_else(|_| chrono::Utc::now()),
-                    last_message_at: row.get::<_, Option<String>>(6)?
+                    last_message_at: row
+                        .get::<_, Option<String>>(6)?
                         .and_then(|s| s.parse().ok()),
                 })
             })?;
@@ -802,7 +846,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                 "SELECT id, user_id, title, metadata, created_at, updated_at, last_message_at
                  FROM sessions
                  ORDER BY updated_at DESC
-                 LIMIT ?1"
+                 LIMIT ?1",
             )?;
 
             let rows = stmt.query_map(params![limit_val], |row| {
@@ -810,15 +854,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                     id: row.get(0)?,
                     user_id: row.get(1)?,
                     title: row.get(2)?,
-                    metadata: row.get::<_, Option<String>>(3)?
+                    metadata: row
+                        .get::<_, Option<String>>(3)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
-                    created_at: row.get::<_, String>(4)?
+                    created_at: row
+                        .get::<_, String>(4)?
                         .parse()
                         .unwrap_or_else(|_| chrono::Utc::now()),
-                    updated_at: row.get::<_, String>(5)?
+                    updated_at: row
+                        .get::<_, String>(5)?
                         .parse()
                         .unwrap_or_else(|_| chrono::Utc::now()),
-                    last_message_at: row.get::<_, Option<String>>(6)?
+                    last_message_at: row
+                        .get::<_, Option<String>>(6)?
                         .and_then(|s| s.parse().ok()),
                 })
             })?;
@@ -848,8 +896,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         title: Option<&str>,
         metadata: Option<&serde_json::Value>,
     ) -> Result<()> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let now = chrono::Utc::now();
 
@@ -880,8 +929,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Ok(()) if successful
     pub fn delete_session(&self, session_id: &str) -> Result<()> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
 
@@ -907,8 +957,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         content: &str,
         metadata: Option<&serde_json::Value>,
     ) -> Result<Message> {
-        let mut conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let mut conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let tx = conn.transaction()?;
 
@@ -968,8 +1019,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// Vector of messages in chronological order
     pub fn get_messages(&self, session_id: &str, limit: Option<usize>) -> Result<Vec<Message>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut messages = Vec::new();
 
@@ -979,23 +1031,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                  FROM messages
                  WHERE session_id = ?1
                  ORDER BY sequence_number ASC
-                 LIMIT ?2"
+                 LIMIT ?2",
             )?;
 
             let rows = stmt.query_map(params![session_id, lim as i64], |row| {
                 let role_str: String = row.get(2)?;
-                let role = MessageRole::from_str(&role_str)
-                    .unwrap_or(MessageRole::User);
+                let role = MessageRole::from_str(&role_str).unwrap_or(MessageRole::User);
 
                 Ok(Message {
                     id: row.get(0)?,
                     session_id: row.get(1)?,
                     role,
                     content: row.get(3)?,
-                    metadata: row.get::<_, Option<String>>(4)?
+                    metadata: row
+                        .get::<_, Option<String>>(4)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
                     sequence_number: row.get::<_, i64>(5)? as usize,
-                    created_at: row.get::<_, String>(6)?
+                    created_at: row
+                        .get::<_, String>(6)?
                         .parse()
                         .unwrap_or_else(|_| chrono::Utc::now()),
                 })
@@ -1009,23 +1062,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                 "SELECT id, session_id, role, content, metadata, sequence_number, created_at
                  FROM messages
                  WHERE session_id = ?1
-                 ORDER BY sequence_number ASC"
+                 ORDER BY sequence_number ASC",
             )?;
 
             let rows = stmt.query_map(params![session_id], |row| {
                 let role_str: String = row.get(2)?;
-                let role = MessageRole::from_str(&role_str)
-                    .unwrap_or(MessageRole::User);
+                let role = MessageRole::from_str(&role_str).unwrap_or(MessageRole::User);
 
                 Ok(Message {
                     id: row.get(0)?,
                     session_id: row.get(1)?,
                     role,
                     content: row.get(3)?,
-                    metadata: row.get::<_, Option<String>>(4)?
+                    metadata: row
+                        .get::<_, Option<String>>(4)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
                     sequence_number: row.get::<_, i64>(5)? as usize,
-                    created_at: row.get::<_, String>(6)?
+                    created_at: row
+                        .get::<_, String>(6)?
                         .parse()
                         .unwrap_or_else(|_| chrono::Utc::now()),
                 })
@@ -1060,8 +1114,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         query: &str,
         config: &CompilerConfig,
     ) -> Result<SessionWorkingSet> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let id = uuid::Uuid::new_v4().to_string();
         let working_set_id = uuid::Uuid::new_v4().to_string(); // Generate a unique ID for this working set
@@ -1112,8 +1167,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         let messages = self.get_messages(session_id, None)?;
 
         // Get working sets for this session
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut stmt = conn.prepare(
             "SELECT id, session_id, message_id, working_set_id, query, config, created_at
@@ -1122,38 +1178,39 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
              ORDER BY created_at ASC",
         )?;
 
-        let working_sets = stmt.query_map(params![session_id], |row| {
-            let config_str: String = row.get(5)?;
-            let config: CompilerConfig = serde_json::from_str(&config_str)
-                .unwrap_or_default();
+        let working_sets = stmt
+            .query_map(params![session_id], |row| {
+                let config_str: String = row.get(5)?;
+                let config: CompilerConfig = serde_json::from_str(&config_str).unwrap_or_default();
 
-            // Note: We can't reconstruct the full WorkingSet from storage without additional data
-            // For now, we'll create a placeholder. In a real implementation, you'd store the
-            // working set data as JSON and deserialize it here.
-            let working_set = WorkingSet {
-                text: String::new(),
-                spans: Vec::new(),
-                citations: Vec::new(),
-                tokens_used: 0,
-                query: row.get::<_, String>(4)?,
-                compilation_time_ms: 0,
-                manifest: None,
-                explain: None,
-            };
+                // Note: We can't reconstruct the full WorkingSet from storage without additional data
+                // For now, we'll create a placeholder. In a real implementation, you'd store the
+                // working set data as JSON and deserialize it here.
+                let working_set = WorkingSet {
+                    text: String::new(),
+                    spans: Vec::new(),
+                    citations: Vec::new(),
+                    tokens_used: 0,
+                    query: row.get::<_, String>(4)?,
+                    compilation_time_ms: 0,
+                    manifest: None,
+                    explain: None,
+                };
 
-            Ok(SessionWorkingSet {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                message_id: row.get(2)?,
-                working_set,
-                query: row.get(4)?,
-                config,
-                created_at: row.get::<_, String>(6)?
-                    .parse()
-                    .unwrap_or_else(|_| chrono::Utc::now()),
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(SessionWorkingSet {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    message_id: row.get(2)?,
+                    working_set,
+                    query: row.get(4)?,
+                    config,
+                    created_at: row
+                        .get::<_, String>(6)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(Some(SessionWithMessages {
             session,
@@ -1174,8 +1231,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     ///
     /// The registered agent
     pub fn register_agent(&self, agent: &crate::types::Agent) -> Result<crate::types::Agent> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         conn.execute(
             "INSERT OR REPLACE INTO agents (id, name, role, model, system_prompt, did, capabilities, metadata, created_at)
@@ -1198,12 +1256,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
 
     /// Get an agent by ID
     pub fn get_agent(&self, agent_id: &str) -> Result<Option<crate::types::Agent>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut stmt = conn.prepare(
             "SELECT id, name, role, model, system_prompt, did, capabilities, metadata, created_at
-             FROM agents WHERE id = ?1"
+             FROM agents WHERE id = ?1",
         )?;
 
         let result = stmt.query_row(params![agent_id], |row| {
@@ -1214,11 +1273,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                 model: row.get(3)?,
                 system_prompt: row.get(4)?,
                 did: row.get(5)?,
-                capabilities: row.get::<_, Option<String>>(6)?
+                capabilities: row
+                    .get::<_, Option<String>>(6)?
                     .and_then(|s| serde_json::from_str(&s).ok()),
-                metadata: row.get::<_, Option<String>>(7)?
+                metadata: row
+                    .get::<_, Option<String>>(7)?
                     .and_then(|s| serde_json::from_str(&s).ok()),
-                created_at: row.get::<_, String>(8)?
+                created_at: row
+                    .get::<_, String>(8)?
                     .parse()
                     .unwrap_or_else(|_| chrono::Utc::now()),
             })
@@ -1233,12 +1295,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
 
     /// Get an agent by name within a session (looks up by session participants)
     pub fn get_agent_by_name(&self, name: &str) -> Result<Option<crate::types::Agent>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut stmt = conn.prepare(
             "SELECT id, name, role, model, system_prompt, did, capabilities, metadata, created_at
-             FROM agents WHERE name = ?1"
+             FROM agents WHERE name = ?1",
         )?;
 
         let result = stmt.query_row(params![name], |row| {
@@ -1249,11 +1312,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
                 model: row.get(3)?,
                 system_prompt: row.get(4)?,
                 did: row.get(5)?,
-                capabilities: row.get::<_, Option<String>>(6)?
+                capabilities: row
+                    .get::<_, Option<String>>(6)?
                     .and_then(|s| serde_json::from_str(&s).ok()),
-                metadata: row.get::<_, Option<String>>(7)?
+                metadata: row
+                    .get::<_, Option<String>>(7)?
                     .and_then(|s| serde_json::from_str(&s).ok()),
-                created_at: row.get::<_, String>(8)?
+                created_at: row
+                    .get::<_, String>(8)?
                     .parse()
                     .unwrap_or_else(|_| chrono::Utc::now()),
             })
@@ -1268,32 +1334,37 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
 
     /// List all registered agents
     pub fn list_agents(&self) -> Result<Vec<crate::types::Agent>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut stmt = conn.prepare(
             "SELECT id, name, role, model, system_prompt, did, capabilities, metadata, created_at
-             FROM agents ORDER BY created_at"
+             FROM agents ORDER BY created_at",
         )?;
 
-        let agents = stmt.query_map([], |row| {
-            Ok(crate::types::Agent {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                role: row.get(2)?,
-                model: row.get(3)?,
-                system_prompt: row.get(4)?,
-                did: row.get(5)?,
-                capabilities: row.get::<_, Option<String>>(6)?
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                metadata: row.get::<_, Option<String>>(7)?
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                created_at: row.get::<_, String>(8)?
-                    .parse()
-                    .unwrap_or_else(|_| chrono::Utc::now()),
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        let agents = stmt
+            .query_map([], |row| {
+                Ok(crate::types::Agent {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    role: row.get(2)?,
+                    model: row.get(3)?,
+                    system_prompt: row.get(4)?,
+                    did: row.get(5)?,
+                    capabilities: row
+                        .get::<_, Option<String>>(6)?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    metadata: row
+                        .get::<_, Option<String>>(7)?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    created_at: row
+                        .get::<_, String>(8)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(agents)
     }
@@ -1309,15 +1380,18 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
         target_message_id: &str,
         stance: crate::types::Stance,
     ) -> Result<crate::types::AgentRelation> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         // Look up the target message to find its agent
-        let to_agent_id: String = conn.query_row(
-            "SELECT json_extract(metadata, '$.agent_id') FROM messages WHERE id = ?1",
-            params![target_message_id],
-            |row| row.get(0),
-        ).unwrap_or_else(|_| "unknown".to_string());
+        let to_agent_id: String = conn
+            .query_row(
+                "SELECT json_extract(metadata, '$.agent_id') FROM messages WHERE id = ?1",
+                params![target_message_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "unknown".to_string());
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
@@ -1350,9 +1424,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
     }
 
     /// Get all agent relations for a session with resolved names
-    pub fn get_agent_relations(&self, session_id: &str) -> Result<crate::types::AgentRelationSummary> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+    pub fn get_agent_relations(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::types::AgentRelationSummary> {
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut stmt = conn.prepare(
             "SELECT
@@ -1363,7 +1441,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
              LEFT JOIN agents fa ON ar.from_agent_id = fa.id
              LEFT JOIN agents ta ON ar.to_agent_id = ta.id
              WHERE ar.session_id = ?1
-             ORDER BY ar.created_at"
+             ORDER BY ar.created_at",
         )?;
 
         let mut agreements = Vec::new();
@@ -1372,18 +1450,23 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
 
         let rows = stmt.query_map(params![session_id], |row| {
             Ok((
-                row.get::<_, String>(1)?,  // message_id
-                row.get::<_, String>(2)?,  // target_message_id
-                row.get::<_, String>(3)?,  // stance
-                row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "unknown".to_string()),  // from_name
-                row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "?".to_string()),        // from_model
-                row.get::<_, Option<String>>(6)?.unwrap_or_else(|| "unknown".to_string()),  // to_name
-                row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "?".to_string()),        // to_model
+                row.get::<_, String>(1)?, // message_id
+                row.get::<_, String>(2)?, // target_message_id
+                row.get::<_, String>(3)?, // stance
+                row.get::<_, Option<String>>(4)?
+                    .unwrap_or_else(|| "unknown".to_string()), // from_name
+                row.get::<_, Option<String>>(5)?
+                    .unwrap_or_else(|| "?".to_string()), // from_model
+                row.get::<_, Option<String>>(6)?
+                    .unwrap_or_else(|| "unknown".to_string()), // to_name
+                row.get::<_, Option<String>>(7)?
+                    .unwrap_or_else(|| "?".to_string()), // to_model
             ))
         })?;
 
         for row in rows {
-            let (message_id, target_message_id, stance, from_name, from_model, to_name, to_model) = row?;
+            let (message_id, target_message_id, stance, from_name, from_model, to_name, to_model) =
+                row?;
             let entry = crate::types::AgentRelationEntry {
                 from_agent: from_name,
                 from_model,
@@ -1410,8 +1493,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
 
     /// Get agents participating in a session (from their messages)
     pub fn get_session_agents(&self, session_id: &str) -> Result<Vec<crate::types::Agent>> {
-        let conn = self.conn.lock()
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e)))?;
+        let conn = self.conn.lock().map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("Database lock poisoned: {}", e))
+        })?;
 
         let mut stmt = conn.prepare(
             "SELECT DISTINCT a.id, a.name, a.role, a.model, a.system_prompt, a.did, a.capabilities, a.metadata, a.created_at
@@ -1421,24 +1505,28 @@ CREATE INDEX IF NOT EXISTS idx_agent_relations_to ON agent_relations(to_agent_id
              ORDER BY a.name"
         )?;
 
-        let agents = stmt.query_map(params![session_id], |row| {
-            Ok(crate::types::Agent {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                role: row.get(2)?,
-                model: row.get(3)?,
-                system_prompt: row.get(4)?,
-                did: row.get(5)?,
-                capabilities: row.get::<_, Option<String>>(6)?
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                metadata: row.get::<_, Option<String>>(7)?
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                created_at: row.get::<_, String>(8)?
-                    .parse()
-                    .unwrap_or_else(|_| chrono::Utc::now()),
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        let agents = stmt
+            .query_map(params![session_id], |row| {
+                Ok(crate::types::Agent {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    role: row.get(2)?,
+                    model: row.get(3)?,
+                    system_prompt: row.get(4)?,
+                    did: row.get(5)?,
+                    capabilities: row
+                        .get::<_, Option<String>>(6)?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    metadata: row
+                        .get::<_, Option<String>>(7)?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    created_at: row
+                        .get::<_, String>(8)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(agents)
     }
@@ -1520,7 +1608,9 @@ mod tests {
     fn test_create_session() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user123"), Some("Test Session")).unwrap();
+        let session = db
+            .create_session(Some("user123"), Some("Test Session"))
+            .unwrap();
 
         assert!(!session.id.is_empty());
         assert_eq!(session.user_id, Some("user123".to_string()));
@@ -1533,7 +1623,9 @@ mod tests {
     fn test_get_session() {
         let db = Database::new(":memory:").unwrap();
 
-        let created = db.create_session(Some("user456"), Some("Another Session")).unwrap();
+        let created = db
+            .create_session(Some("user456"), Some("Another Session"))
+            .unwrap();
         let retrieved = db.get_session(&created.id).unwrap();
 
         assert!(retrieved.is_some());
@@ -1581,17 +1673,21 @@ mod tests {
     fn test_update_session() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user1"), Some("Original Title")).unwrap();
+        let session = db
+            .create_session(Some("user1"), Some("Original Title"))
+            .unwrap();
 
         // Update title
-        db.update_session(&session.id, Some("Updated Title"), None).unwrap();
+        db.update_session(&session.id, Some("Updated Title"), None)
+            .unwrap();
 
         let updated = db.get_session(&session.id).unwrap().unwrap();
         assert_eq!(updated.title, Some("Updated Title".to_string()));
 
         // Update metadata
         let metadata = serde_json::json!({"key": "value"});
-        db.update_session(&session.id, None, Some(&metadata)).unwrap();
+        db.update_session(&session.id, None, Some(&metadata))
+            .unwrap();
 
         let updated2 = db.get_session(&session.id).unwrap().unwrap();
         assert!(updated2.metadata.is_some());
@@ -1618,16 +1714,22 @@ mod tests {
     fn test_add_message() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user1"), Some("Chat Session")).unwrap();
+        let session = db
+            .create_session(Some("user1"), Some("Chat Session"))
+            .unwrap();
 
         // Add first message
-        let msg1 = db.add_message(&session.id, MessageRole::User, "Hello", None).unwrap();
+        let msg1 = db
+            .add_message(&session.id, MessageRole::User, "Hello", None)
+            .unwrap();
         assert_eq!(msg1.sequence_number, 0);
         assert_eq!(msg1.content, "Hello");
         assert_eq!(msg1.role.as_str(), "user");
 
         // Add second message
-        let msg2 = db.add_message(&session.id, MessageRole::Assistant, "Hi there!", None).unwrap();
+        let msg2 = db
+            .add_message(&session.id, MessageRole::Assistant, "Hi there!", None)
+            .unwrap();
         assert_eq!(msg2.sequence_number, 1);
         assert_eq!(msg2.content, "Hi there!");
         assert_eq!(msg2.role.as_str(), "assistant");
@@ -1641,10 +1743,14 @@ mod tests {
     fn test_add_message_with_metadata() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user1"), Some("Chat Session")).unwrap();
+        let session = db
+            .create_session(Some("user1"), Some("Chat Session"))
+            .unwrap();
 
         let metadata = serde_json::json!({"tool": "search", "query": "test"});
-        let msg = db.add_message(&session.id, MessageRole::Tool, "Result", Some(&metadata)).unwrap();
+        let msg = db
+            .add_message(&session.id, MessageRole::Tool, "Result", Some(&metadata))
+            .unwrap();
 
         assert!(msg.metadata.is_some());
         assert_eq!(msg.metadata.unwrap()["tool"], "search");
@@ -1654,12 +1760,17 @@ mod tests {
     fn test_get_messages() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user1"), Some("Chat Session")).unwrap();
+        let session = db
+            .create_session(Some("user1"), Some("Chat Session"))
+            .unwrap();
 
         // Add multiple messages
-        db.add_message(&session.id, MessageRole::User, "Message 1", None).unwrap();
-        db.add_message(&session.id, MessageRole::Assistant, "Message 2", None).unwrap();
-        db.add_message(&session.id, MessageRole::User, "Message 3", None).unwrap();
+        db.add_message(&session.id, MessageRole::User, "Message 1", None)
+            .unwrap();
+        db.add_message(&session.id, MessageRole::Assistant, "Message 2", None)
+            .unwrap();
+        db.add_message(&session.id, MessageRole::User, "Message 3", None)
+            .unwrap();
 
         // Get all messages
         let messages = db.get_messages(&session.id, None).unwrap();
@@ -1677,12 +1788,17 @@ mod tests {
     fn test_message_ordering() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user1"), Some("Chat Session")).unwrap();
+        let session = db
+            .create_session(Some("user1"), Some("Chat Session"))
+            .unwrap();
 
         // Add messages
-        db.add_message(&session.id, MessageRole::User, "First", None).unwrap();
-        db.add_message(&session.id, MessageRole::Assistant, "Second", None).unwrap();
-        db.add_message(&session.id, MessageRole::User, "Third", None).unwrap();
+        db.add_message(&session.id, MessageRole::User, "First", None)
+            .unwrap();
+        db.add_message(&session.id, MessageRole::Assistant, "Second", None)
+            .unwrap();
+        db.add_message(&session.id, MessageRole::User, "Third", None)
+            .unwrap();
 
         let messages = db.get_messages(&session.id, None).unwrap();
 
@@ -1701,8 +1817,12 @@ mod tests {
     fn test_associate_working_set() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user1"), Some("Chat Session")).unwrap();
-        let message = db.add_message(&session.id, MessageRole::User, "Query", None).unwrap();
+        let session = db
+            .create_session(Some("user1"), Some("Chat Session"))
+            .unwrap();
+        let message = db
+            .add_message(&session.id, MessageRole::User, "Query", None)
+            .unwrap();
 
         // Create a working set
         let working_set = WorkingSet {
@@ -1718,13 +1838,15 @@ mod tests {
 
         let config = CompilerConfig::default();
 
-        let sws = db.associate_working_set(
-            &session.id,
-            Some(&message.id),
-            &working_set,
-            "test query",
-            &config,
-        ).unwrap();
+        let sws = db
+            .associate_working_set(
+                &session.id,
+                Some(&message.id),
+                &working_set,
+                "test query",
+                &config,
+            )
+            .unwrap();
 
         assert_eq!(sws.session_id, session.id);
         assert_eq!(sws.message_id, Some(message.id));
@@ -1736,11 +1858,16 @@ mod tests {
     fn test_get_session_full() {
         let db = Database::new(":memory:").unwrap();
 
-        let session = db.create_session(Some("user1"), Some("Full Session")).unwrap();
+        let session = db
+            .create_session(Some("user1"), Some("Full Session"))
+            .unwrap();
 
         // Add messages
-        let msg1 = db.add_message(&session.id, MessageRole::User, "Hello", None).unwrap();
-        db.add_message(&session.id, MessageRole::Assistant, "Hi!", None).unwrap();
+        let msg1 = db
+            .add_message(&session.id, MessageRole::User, "Hello", None)
+            .unwrap();
+        db.add_message(&session.id, MessageRole::Assistant, "Hi!", None)
+            .unwrap();
 
         // Add working set
         let working_set = WorkingSet {
@@ -1760,7 +1887,8 @@ mod tests {
             &working_set,
             "test",
             &CompilerConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Get full session
         let full = db.get_session_full(&session.id).unwrap();
@@ -1779,8 +1907,10 @@ mod tests {
         let session = db.create_session(Some("user1"), Some("To Delete")).unwrap();
 
         // Add messages
-        db.add_message(&session.id, MessageRole::User, "Message 1", None).unwrap();
-        db.add_message(&session.id, MessageRole::Assistant, "Message 2", None).unwrap();
+        db.add_message(&session.id, MessageRole::User, "Message 1", None)
+            .unwrap();
+        db.add_message(&session.id, MessageRole::Assistant, "Message 2", None)
+            .unwrap();
 
         // Verify messages exist
         let messages_before = db.get_messages(&session.id, None).unwrap();
@@ -1801,10 +1931,22 @@ mod tests {
         assert_eq!(MessageRole::System.as_str(), "system");
         assert_eq!(MessageRole::Tool.as_str(), "tool");
 
-        assert!(matches!(MessageRole::from_str("user").unwrap(), MessageRole::User));
-        assert!(matches!(MessageRole::from_str("assistant").unwrap(), MessageRole::Assistant));
-        assert!(matches!(MessageRole::from_str("system").unwrap(), MessageRole::System));
-        assert!(matches!(MessageRole::from_str("tool").unwrap(), MessageRole::Tool));
+        assert!(matches!(
+            MessageRole::from_str("user").unwrap(),
+            MessageRole::User
+        ));
+        assert!(matches!(
+            MessageRole::from_str("assistant").unwrap(),
+            MessageRole::Assistant
+        ));
+        assert!(matches!(
+            MessageRole::from_str("system").unwrap(),
+            MessageRole::System
+        ));
+        assert!(matches!(
+            MessageRole::from_str("tool").unwrap(),
+            MessageRole::Tool
+        ));
 
         assert!(MessageRole::from_str("invalid").is_err());
     }

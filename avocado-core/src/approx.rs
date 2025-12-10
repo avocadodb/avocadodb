@@ -2,9 +2,9 @@
 //!
 //! Provides a minimal trait for building and searching vector indexes.
 
-use crate::{Result, ScoredSpan, Span};
 use crate::index::cosine_similarity;
-use serde::{Serialize, Deserialize};
+use crate::{Result, ScoredSpan, Span};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Minimal ANN abstraction for build/search/save/load
@@ -170,8 +170,9 @@ impl ApproxIndex for InstantBackend {
             spans: slim,
             embeddings: self.embeddings.clone(),
         };
-        let data = bincode::serialize(&on_disk)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("serialize instant index: {}", e)))?;
+        let data = bincode::serialize(&on_disk).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("serialize instant index: {}", e))
+        })?;
         let tmp = dir.join("instant.idx.tmp");
         let dst = dir.join("instant.idx");
         fs::write(&tmp, data)?;
@@ -186,8 +187,9 @@ impl ApproxIndex for InstantBackend {
             return Ok(None);
         }
         let bytes = fs::read(path)?;
-        let on_disk: InstantBackendOnDisk = bincode::deserialize(&bytes)
-            .map_err(|e| crate::types::Error::Other(anyhow::anyhow!("deserialize instant index: {}", e)))?;
+        let on_disk: InstantBackendOnDisk = bincode::deserialize(&bytes).map_err(|e| {
+            crate::types::Error::Other(anyhow::anyhow!("deserialize instant index: {}", e))
+        })?;
         if on_disk.version != 1 {
             return Ok(None);
         }
@@ -204,4 +206,3 @@ impl ApproxIndex for InstantBackend {
         &self.spans
     }
 }
-
