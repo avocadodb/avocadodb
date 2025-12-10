@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use avocado_core::{
-    db::Database, index::VectorIndex, session::SessionManager, CompilerConfig, MessageRole,
+    db::Database, session::SessionManager, CompilerConfig, MessageRole,
 };
 use clap::Subcommand;
 use console::style;

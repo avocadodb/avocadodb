@@ -121,6 +121,7 @@ impl EmbeddingProvider {
         }
     }
 
+    /// Get the embedding dimension for this provider
     pub fn dimension(&self) -> usize {
         match self {
             EmbeddingProvider::Local => get_local_embedding_dimension(),
@@ -135,6 +136,7 @@ impl EmbeddingProvider {
         }
     }
 
+    /// Get the model name for this provider
     pub fn model_name(&self) -> &'static str {
         match self {
             EmbeddingProvider::Local => get_local_model_name(),

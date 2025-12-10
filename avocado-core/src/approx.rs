@@ -1,3 +1,7 @@
+//! Approximate Nearest Neighbor (ANN) index abstraction
+//!
+//! Provides a minimal trait for building and searching vector indexes.
+
 use crate::{Result, ScoredSpan, Span};
 use crate::index::cosine_similarity;
 use serde::{Serialize, Deserialize};

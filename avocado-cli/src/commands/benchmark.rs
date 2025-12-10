@@ -9,13 +9,21 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Instant;
 
 /// Benchmark results for display
+#[allow(dead_code)]
 pub struct BenchmarkResults {
+    /// Time to generate a single embedding in milliseconds
     pub single_embedding_ms: f64,
+    /// Time to generate 10 embeddings in milliseconds
     pub batch_10_ms: f64,
+    /// Time to generate 50 embeddings in milliseconds
     pub batch_50_ms: f64,
+    /// Time to generate 100 embeddings in milliseconds
     pub batch_100_ms: f64,
+    /// Name of the embedding model used
     pub model_name: String,
+    /// Dimension of the embedding vectors
     pub dimensions: usize,
+    /// Hardware performance rating (e.g., "excellent", "good", "acceptable")
     pub hardware_rating: String,
 }
 
