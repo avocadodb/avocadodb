@@ -37,11 +37,15 @@ jobs:
             platform: macos
             arch: aarch64
             ext: tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            platform: windows
-            arch: x86_64
-            ext: zip
+          # Windows disabled due to onig_sys linking issues with MSVC
+          # The tokenizers crate requires onig (Oniguruma) which doesn't
+          # compile cleanly on Windows MSVC. See:
+          # https://github.com/huggingface/tokenizers/issues/1581
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   platform: windows
+          #   arch: x86_64
+          #   ext: zip
 
     steps:
       - name: Checkout code
@@ -87,17 +91,12 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} --bin avocado
 
       - name: Prepare package directory
-        shell: bash
         run: |
           PACKAGE_DIR="avocado-cli-${{ steps.version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}"
           mkdir -p "${PACKAGE_DIR}"
 
           # Copy binary
-          if [ "${{ matrix.platform }}" = "windows" ]; then
-            cp "target/${{ matrix.target }}/release/avocado.exe" "${PACKAGE_DIR}/"
-          else
-            cp "target/${{ matrix.target }}/release/avocado" "${PACKAGE_DIR}/"
-          fi
+          cp "target/${{ matrix.target }}/release/avocado" "${PACKAGE_DIR}/"
 
           # Copy documentation
           cp LICENSE "${PACKAGE_DIR}/"
@@ -105,26 +104,12 @@ jobs:
 
           echo "PACKAGE_DIR=${PACKAGE_DIR}" >> $GITHUB_ENV
 
-      - name: Create archive (Unix)
-        if: matrix.platform != 'windows'
+      - name: Create archive
         run: tar -czf "${{ env.PACKAGE_DIR }}.tar.gz" "${{ env.PACKAGE_DIR }}"
 
-      - name: Create archive (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: Compress-Archive -Path "${{ env.PACKAGE_DIR }}" -DestinationPath "${{ env.PACKAGE_DIR }}.zip"
-
-      - name: Generate checksum (Unix)
-        if: matrix.platform != 'windows'
+      - name: Generate checksum
         run: |
           sha256sum "${{ env.PACKAGE_DIR }}.tar.gz" > "${{ env.PACKAGE_DIR }}.tar.gz.sha256"
-
-      - name: Generate checksum (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash -Path "${{ env.PACKAGE_DIR }}.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  ${{ env.PACKAGE_DIR }}.zip" | Out-File -FilePath "${{ env.PACKAGE_DIR }}.zip.sha256" -Encoding ASCII
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -235,18 +220,13 @@ jobs:
           - **Linux (x86_64)**: `avocado-cli-${VERSION}-linux-x86_64.tar.gz`
           - **macOS (Intel)**: `avocado-cli-${VERSION}-macos-x86_64.tar.gz`
           - **macOS (Apple Silicon)**: `avocado-cli-${VERSION}-macos-aarch64.tar.gz`
-          - **Windows (x86_64)**: `avocado-cli-${VERSION}-windows-x86_64.zip`
 
           Extract and add to your PATH:
 
           ```bash
-          # Linux/macOS
           tar -xzf avocado-cli-*.tar.gz
           cd avocado-cli-*
           sudo mv avocado /usr/local/bin/
-
-          # Windows
-          # Extract the zip file and add the directory to your PATH
           ```
 
           Verify checksums using the provided `.sha256` files:

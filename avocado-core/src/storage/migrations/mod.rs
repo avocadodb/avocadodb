@@ -1,5 +1,7 @@
 //! Database migrations for each backend
+//!
+//! The postgres module is always available as reference schema for
+//! the avocado-pgext PostgreSQL extension.
 
 pub mod sqlite;
-#[cfg(feature = "postgres")]
 pub mod postgres;

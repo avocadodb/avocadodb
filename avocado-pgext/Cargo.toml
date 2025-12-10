@@ -1,0 +1,39 @@
+[package]
+name = "avocado-pgext"
+version = "2.2.0"
+edition = "2021"
+license = "MIT"
+description = "AvocadoDB PostgreSQL Extension - Deterministic context compilation for AI agents"
+repository = "https://github.com/AvocadoDB/avocadodb"
+keywords = ["postgresql", "extension", "rag", "embeddings", "ai"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["pg16"]
+pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
+openai = []  # Enable OpenAI embedding provider
+
+[dependencies]
+pgrx = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+sha2 = "0.10"
+thiserror = "1.0"
+
+# Pure Rust embeddings - fastembed (synchronous, no tokio needed)
+# Use same version as avocado-core to avoid ort version conflicts
+fastembed = { version = "5.4.0", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries"] }
+
+# HTTP client for Ollama and OpenAI
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+[dev-dependencies]
+pgrx-tests = "0.12"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

@@ -5,6 +5,64 @@ All notable changes to AvocadoDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2025-12-10
+
+### Added - PostgreSQL Extension & Ollama Support
+
+#### PostgreSQL Extension (avocado-pgext)
+- **Native PostgreSQL extension** using pgrx framework - use AvocadoDB directly in SQL
+- **SQL Functions** for all operations:
+  - `avocado_compile(query, config)` - Deterministic context compilation
+  - `avocado_ingest_artifact(path, content, metadata)` - Document ingestion with chunking
+  - `avocado_search_spans(query, limit)` - Semantic search
+  - `avocado_create_session()`, `avocado_add_message()`, `avocado_get_conversation_history()` - Session management
+  - `avocado_register_agent()`, `avocado_add_agent_relation()`, `avocado_get_agent_relations()` - Multi-agent orchestration
+  - `avocado_stats()`, `avocado_version()`, `avocado_init()` - Utilities
+- **Runtime embedding configuration** via SQL:
+  - `avocado_set_embedding_provider('ollama')` - Switch providers
+  - `avocado_set_ollama_config(url, model)` - Configure Ollama
+  - `avocado_embedding_config()` - View current settings
+  - `avocado_test_embedding(text)` - Test embedding generation
+- **HNSW vector index** with pgvector (1024 dimensions, supports bge-m3)
+- **Docker image**: `avocadodb/postgres:pg16` with pgvector + avocado extensions
+- **CI pipeline**: `.github/workflows/pgext.yml` for automated builds
+
+#### Ollama Integration
+- **Native Ollama support** in avocado-core for local embedding models
+- **Environment variables**:
+  - `AVOCADODB_EMBEDDING_PROVIDER=ollama` - Use Ollama
+  - `AVOCADODB_OLLAMA_URL` - Server URL (default: http://localhost:11434)
+  - `AVOCADODB_OLLAMA_MODEL` - Model name (default: bge-m3)
+- **Auto-detected dimensions** by model:
+  - bge-m3: 1024 dimensions
+  - nomic-embed-text: 768 dimensions
+  - mxbai-embed-large: 1024 dimensions
+  - all-minilm: 384 dimensions
+- **Batch API support** (Ollama 0.4.0+) with fallback to single-text API
+
+#### Multi-Agent Orchestration
+- **Agent registration**: `avocado_register_agent(name, role, model, system_prompt)`
+- **Relation tracking**: `avocado_add_agent_relation(session_id, message_id, from_agent, target, stance)`
+- **Stance types**: agree, disagree, neutral, question
+- **Agent relations query**: `avocado_get_agent_relations(session_id)` with resolved names
+
+### Changed
+- **Embedding provider selection**: Now supports `local`, `ollama`, `openai` via environment
+- **Docker images**: Two images available (standalone: avocadodb/avocadodb, postgres: avocadodb/postgres:pg16)
+- **Schema dimension**: Updated to 1024 for larger models (zero-padded for smaller)
+
+### Removed
+- **postgres.rs client-library**: Removed in favor of native PostgreSQL extension
+- `StorageConfig::Postgres` now returns error directing to avocado-pgext
+
+### Migration Guide
+If you were using the experimental PostgreSQL backend via `AVOCADO_BACKEND=postgres://...`:
+1. Use the new `avocadodb/postgres:pg16` Docker image instead
+2. Use SQL functions directly: `SELECT avocado_compile('query')`
+3. Or continue using standalone server with SQLite (no changes needed)
+
+---
+
 ## [2.1.0] - 2025-12-09
 
 ### Added - Determinism & Explainability Features

@@ -243,12 +243,23 @@ AvocadoDB is production-ready with full Docker and Kubernetes support.
 
 ### Docker
 
+**Two Docker Images Available:**
+
+| Image | Contents | Use Case |
+|-------|----------|----------|
+| `avocadodb/avocadodb:latest` | Rust server + SQLite | Standalone, zero-config |
+| `avocadodb/postgres:pg16` | PostgreSQL + pgvector + avocado extension | Production, native SQL |
+
 ```bash
-# Quick start with Docker
+# Quick start with Docker (standalone)
 docker run -d -p 8765:8765 -v avocado-data:/data avocadodb/avocadodb:latest
 
 # Or use Docker Compose
 docker-compose up -d
+
+# PostgreSQL Extension (native SQL)
+docker compose --profile pgext up -d postgres-avocado
+# Then connect: psql postgres://avocado:changeme@localhost:5432/avocadodb
 ```
 
 **Features:**
@@ -259,6 +270,45 @@ docker-compose up -d
 - Configurable via environment variables
 
 See [Docker Guide](docs/DOCKER.md) for complete documentation.
+
+### PostgreSQL Extension (NEW in v2.2)
+
+AvocadoDB is available as a native PostgreSQL extension, enabling deterministic context compilation directly in SQL:
+
+```sql
+-- Enable extensions
+CREATE EXTENSION vector;
+CREATE EXTENSION avocado;
+
+-- Configure embedding provider (optional - defaults to fastembed)
+SELECT avocado_set_embedding_provider('ollama');
+SELECT avocado_set_ollama_config('http://localhost:11434', 'bge-m3');
+
+-- Ingest documents
+SELECT avocado_ingest_artifact('docs/auth.md', 'Authentication uses JWT tokens...');
+
+-- Compile context directly in SQL
+SELECT avocado_compile('How does authentication work?', '{"token_budget": 4000}'::jsonb);
+
+-- Session management
+SELECT avocado_create_session('user@example.com', 'Support Chat');
+SELECT avocado_add_message('session-id', 'user', 'How do I login?', NULL);
+SELECT avocado_get_conversation_history('session-id', 8000);
+
+-- Multi-agent orchestration
+SELECT avocado_register_agent('moderator', 'Tech Moderator', 'gpt-4', 'You are a moderator...');
+SELECT avocado_get_agent_relations('session-id');
+
+-- Check stats
+SELECT avocado_stats();
+```
+
+**Features:**
+- Native SQL interface (like pgvector)
+- Multiple embedding providers (fastembed, Ollama, OpenAI)
+- Full session and multi-agent support
+- HNSW vector index for fast similarity search
+- Works with existing PostgreSQL tooling
 
 ### Kubernetes
 
@@ -287,8 +337,10 @@ See [Kubernetes Guide](k8s/README.md) for complete documentation.
 | `PORT` | `8765` | HTTP server port |
 | `BIND_ADDR` | `127.0.0.1` | Bind address (set `0.0.0.0` to expose publicly) |
 | `RUST_LOG` | `info` | Log level |
-| `AVOCADODB_EMBEDDING_MODEL` | `minilm` | Embedding model (minilm, nomic, bgelarge) |
-| `AVOCADODB_EMBEDDING_PROVIDER` | `local` | Provider (local or openai) |
+| `AVOCADODB_EMBEDDING_PROVIDER` | `local` | Provider: `local`, `ollama`, or `openai` |
+| `AVOCADODB_EMBEDDING_MODEL` | `minilm` | Fastembed model (minilm, nomic, bgelarge) |
+| `AVOCADODB_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+| `AVOCADODB_OLLAMA_MODEL` | `bge-m3` | Ollama model name |
 | `OPENAI_API_KEY` | - | OpenAI API key (if using OpenAI) |
 | `AVOCADODB_ROOT` | unset | Optional project root. When set, all `project` paths must be under this directory. Requests outside are rejected. |
 | `API_TOKEN` | unset | If set, requires header `X-Avocado-Token` to be present and equal for all routes (except `/health`, `/api-docs/*`). |
@@ -659,7 +711,7 @@ Use AvocadoDB as a library in your Rust projects:
 
 ```toml
 [dependencies]
-avocado-core = "2.1"
+avocado-core = "2.2"
 tokio = { version = "1.35", features = ["full"] }
 ```
 
@@ -712,9 +764,10 @@ async fn main() -> avocado_core::types::Result<()> {
 
 ```
 avocadodb/
-├── avocado-core/      # Core engine (Rust)
+├── avocado-core/      # Core engine (Rust library)
 ├── avocado-cli/       # Command-line tool
-├── avocado-server/    # HTTP server
+├── avocado-server/    # HTTP server (REST API)
+├── avocado-pgext/     # PostgreSQL extension (pgrx)
 ├── python/            # Python SDK
 ├── migrations/        # Database schema
 ├── tests/             # Integration tests
@@ -768,9 +821,11 @@ cargo run --bin avocado-server
 - [x] Working set diff for corpus auditing
 - [x] Smart incremental rebuild (content-hash based)
 - [x] Evaluation metrics (recall@k, MRR)
+- [x] **PostgreSQL Extension** (avocado-pgext) - Native SQL interface
+- [x] **Ollama Integration** - Local embedding models (bge-m3, nomic, etc.)
+- [x] **Multi-agent Orchestration** - Agent registration, relations tracking
 - [ ] Multi-modal support (images, code)
 - [ ] Advanced retrieval (BM25, learned rankers)
-- [ ] PostgreSQL support
 - [ ] Framework integrations (LangChain, LlamaIndex)
 
 ### Phase 3 - Agent Memory

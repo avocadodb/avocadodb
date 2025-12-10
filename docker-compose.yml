@@ -41,8 +41,45 @@ services:
     networks:
       - avocado-network
 
-  # PostgreSQL with pgvector for production deployments
-  # To use: set AVOCADO_BACKEND=postgres://avocado:changeme@postgres/avocadodb
+  # PostgreSQL with AvocadoDB Extension (pgvector + avocado)
+  # Usage: docker compose --profile pgext up -d postgres-avocado
+  # Then connect: psql postgres://avocado:changeme@localhost:5432/avocadodb
+  postgres-avocado:
+    build:
+      context: .
+      dockerfile: avocado-pgext/Dockerfile
+    image: avocadodb/postgres:pg16
+    container_name: avocadodb-postgres-ext
+    profiles: ["pgext"]  # Only starts with: docker compose --profile pgext up
+    environment:
+      - POSTGRES_DB=avocadodb
+      - POSTGRES_USER=avocado
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      # Embedding provider: fastembed (default), ollama, or openai
+      - AVOCADO_EMBEDDING_PROVIDER=fastembed
+      # Ollama configuration (when using AVOCADO_EMBEDDING_PROVIDER=ollama)
+      # - AVOCADO_OLLAMA_URL=http://host.docker.internal:11434
+      # - AVOCADO_OLLAMA_MODEL=bge-m3
+      # OpenAI configuration (when using AVOCADO_EMBEDDING_PROVIDER=openai)
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-avocado-data:/var/lib/postgresql/data
+    networks:
+      - avocado-network
+    extra_hosts:
+      # Allow container to reach host's Ollama server
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avocado -d avocadodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Plain PostgreSQL with pgvector (no AvocadoDB extension)
+  # For use with the Rust server's PostgreSQL backend (deprecated)
   postgres:
     image: pgvector/pgvector:pg16
     container_name: avocadodb-postgres
@@ -70,4 +107,6 @@ volumes:
   avocado-data:
     driver: local
   postgres-data:
+    driver: local
+  postgres-avocado-data:
     driver: local

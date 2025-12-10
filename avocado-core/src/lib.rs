@@ -59,8 +59,6 @@ pub use storage::{
     VectorSearchProvider, VectorSearchResult,
     create_backend, create_backend_from_env,
 };
-#[cfg(feature = "postgres")]
-pub use storage::PostgresBackend;
 
 /// The version of AvocadoDB
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

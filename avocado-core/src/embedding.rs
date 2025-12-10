@@ -91,6 +91,8 @@ pub enum EmbeddingProvider {
     OpenAI,
     /// Remote HTTP embeddings (GPU sandbox or custom service)
     Remote,
+    /// Ollama local server (e.g., bge-m3, nomic-embed-text)
+    Ollama,
 }
 
 impl Default for EmbeddingProvider {
@@ -112,8 +114,9 @@ impl EmbeddingProvider {
                 .as_str()
             {
                 "openai" => EmbeddingProvider::OpenAI,
-                "local" => EmbeddingProvider::Local,
+                "local" | "fastembed" => EmbeddingProvider::Local,
                 "remote" => EmbeddingProvider::Remote,
+                "ollama" => EmbeddingProvider::Ollama,
                 _ => EmbeddingProvider::Local,
             }
         } else {
@@ -126,6 +129,7 @@ impl EmbeddingProvider {
         match self {
             EmbeddingProvider::Local => get_local_embedding_dimension(),
             EmbeddingProvider::OpenAI => OPENAI_DIMENSION,
+            EmbeddingProvider::Ollama => get_ollama_embedding_dimension(),
             EmbeddingProvider::Remote => {
                 // Allow overriding remote dimension via env; default to local dimension for compatibility
                 env::var("AVOCADODB_EMBEDDING_DIM")
@@ -141,8 +145,46 @@ impl EmbeddingProvider {
         match self {
             EmbeddingProvider::Local => get_local_model_name(),
             EmbeddingProvider::OpenAI => OPENAI_MODEL,
+            EmbeddingProvider::Ollama => get_ollama_model_name(),
             // Remote model name is not fixed; callers can optionally set AVOCADODB_EMBEDDING_MODEL
             EmbeddingProvider::Remote => DEFAULT_LOCAL_MODEL,
+        }
+    }
+}
+
+// Ollama configuration
+const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+const DEFAULT_OLLAMA_MODEL: &str = "bge-m3";
+
+/// Get the Ollama model from environment
+fn get_ollama_model_name() -> &'static str {
+    // Note: We leak the string to get a 'static lifetime, which is fine since
+    // this is only called when using Ollama and the string is cached
+    static OLLAMA_MODEL: OnceLock<String> = OnceLock::new();
+    let model = OLLAMA_MODEL.get_or_init(|| {
+        env::var("AVOCADODB_OLLAMA_MODEL")
+            .unwrap_or_else(|_| DEFAULT_OLLAMA_MODEL.to_string())
+    });
+    // Safe: OnceLock guarantees this string lives for the program's lifetime
+    unsafe { std::mem::transmute::<&str, &'static str>(model.as_str()) }
+}
+
+/// Get the Ollama embedding dimension based on model name
+fn get_ollama_embedding_dimension() -> usize {
+    let model = get_ollama_model_name();
+    match model {
+        m if m.contains("bge-m3") => 1024,
+        m if m.contains("bge-large") => 1024,
+        m if m.contains("nomic") => 768,
+        m if m.contains("mxbai") => 1024,
+        m if m.contains("minilm") || m.contains("all-minilm") => 384,
+        m if m.contains("snowflake") => 1024,
+        _ => {
+            // Allow explicit dimension override
+            env::var("AVOCADODB_EMBEDDING_DIM")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1024) // Default to 1024 for unknown models
         }
     }
 }
@@ -219,6 +261,7 @@ pub async fn embed_batch(
         EmbeddingProvider::Local => embed_batch_local(texts).await,
         EmbeddingProvider::OpenAI => embed_batch_openai(texts, api_key).await,
         EmbeddingProvider::Remote => embed_batch_remote(texts).await,
+        EmbeddingProvider::Ollama => embed_batch_ollama(texts).await,
     }
 }
 
@@ -681,6 +724,125 @@ async fn embed_batch_remote(texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
 
     Err(Error::Embedding("Failed to parse remote embedding response".to_string()))
 }
+
+/// Ollama embedding generation
+///
+/// Uses local Ollama server with configurable model.
+/// Configure via:
+/// - AVOCADODB_OLLAMA_URL: Ollama server URL (default: http://localhost:11434)
+/// - AVOCADODB_OLLAMA_MODEL: Model name (default: bge-m3)
+///
+/// Supports models like:
+/// - bge-m3 (1024 dimensions, multilingual)
+/// - nomic-embed-text (768 dimensions)
+/// - mxbai-embed-large (1024 dimensions)
+/// - all-minilm (384 dimensions)
+async fn embed_batch_ollama(texts: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+    use serde_json::json;
+
+    let base_url = env::var("AVOCADODB_OLLAMA_URL")
+        .unwrap_or_else(|_| DEFAULT_OLLAMA_URL.to_string());
+    let model = get_ollama_model_name();
+    let expected_dim = get_ollama_embedding_dimension();
+
+    if texts.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let client = Client::new();
+
+    // Try batch endpoint first (Ollama 0.4.0+)
+    let url = format!("{}/api/embed", base_url);
+    let body = json!({
+        "model": model,
+        "input": texts,
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| Error::Embedding(format!("Ollama request failed: {}", e)))?;
+
+    if resp.status().is_success() {
+        let text_body = resp.text().await
+            .map_err(|e| Error::Embedding(format!("Failed reading Ollama response: {}", e)))?;
+
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text_body) {
+            if let Some(arr) = v.get("embeddings").and_then(|x| x.as_array()) {
+                let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(arr.len());
+                for item in arr {
+                    let vec: Vec<f32> = item.as_array()
+                        .map(|nums| nums.iter().filter_map(|n| n.as_f64().map(|f| f as f32)).collect())
+                        .ok_or_else(|| Error::Embedding("Invalid embedding array".to_string()))?;
+                    embeddings.push(vec);
+                }
+                if embeddings.len() != texts.len() {
+                    return Err(Error::Embedding(format!(
+                        "Mismatched embedding count: got {}, expected {}",
+                        embeddings.len(),
+                        texts.len()
+                    )));
+                }
+                return Ok(embeddings);
+            }
+        }
+    }
+
+    // Fall back to single-text endpoint for older Ollama versions
+    let url = format!("{}/api/embeddings", base_url);
+    let mut embeddings = Vec::with_capacity(texts.len());
+
+    for text in texts {
+        let body = json!({
+            "model": model,
+            "prompt": text,
+        });
+
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::Embedding(format!("Ollama request failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Embedding(format!(
+                "Ollama API error {}: {}",
+                status, body
+            )));
+        }
+
+        let text_body = resp.text().await
+            .map_err(|e| Error::Embedding(format!("Failed reading Ollama response: {}", e)))?;
+
+        let v: serde_json::Value = serde_json::from_str(&text_body)
+            .map_err(|e| Error::Embedding(format!("Failed parsing Ollama response: {}", e)))?;
+
+        let embedding: Vec<f32> = v.get("embedding")
+            .and_then(|e| e.as_array())
+            .map(|arr| arr.iter().filter_map(|n| n.as_f64().map(|f| f as f32)).collect())
+            .ok_or_else(|| Error::Embedding("No embedding in Ollama response".to_string()))?;
+
+        if embedding.len() != expected_dim {
+            return Err(Error::Embedding(format!(
+                "Unexpected embedding dimension: {} (expected {})",
+                embedding.len(),
+                expected_dim
+            )));
+        }
+
+        embeddings.push(embedding);
+    }
+
+    Ok(embeddings)
+}
+
 /// Get the embedding model name (based on current provider)
 pub fn embedding_model() -> &'static str {
     EmbeddingProvider::from_env().model_name()
