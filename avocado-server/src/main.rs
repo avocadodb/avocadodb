@@ -1,11 +1,11 @@
 //! AvocadoDB HTTP Server
 //!
-//! MongoDB-style daemon: One server managing multiple project indexes.
+//! Multi-project daemon server managing project indexes with LRU caching.
 //! Each project has its own database and in-memory HNSW index.
 
 use avocado_core::{
-    compiler, db::Database, embedding, index::VectorIndex, session::SessionManager, span,
-    Artifact, CompilerConfig, Message, MessageRole, Session, VERSION,
+    compiler, db::Database, embedding, session::SessionManager, span,
+    storage::SqliteBackend, Artifact, CompilerConfig, Message, MessageRole, Session, VERSION,
 };
 use axum::{
     extract::{Json, Path, Query, State},
@@ -33,10 +33,27 @@ const MAX_PROJECTS_IN_MEMORY: usize = 10;
 /// A project's index (database + in-memory HNSW + session manager)
 struct ProjectIndex {
     database: Database,
-    hnsw_index: Arc<VectorIndex>,
+    hnsw_index: Arc<avocado_core::index::VectorIndex>,
     session_manager: Arc<SessionManager>,
-    last_accessed: Arc<RwLock<Instant>>,  // Mutable last_accessed
-    project_path: PathBuf,
+    last_accessed: Arc<RwLock<Instant>>,
+    /// Storage backend for async operations (lazy-initialized)
+    /// Ready for use with StorageBackend trait methods
+    #[allow(dead_code)]
+    backend: tokio::sync::OnceCell<SqliteBackend>,
+}
+
+impl ProjectIndex {
+    /// Get the storage backend (lazy-initializes on first call)
+    ///
+    /// Use this method to access backend-agnostic async operations.
+    /// The backend is lazily created from the Database on first access.
+    #[allow(dead_code)]
+    pub async fn get_backend(&self) -> Result<&SqliteBackend, anyhow::Error> {
+        self.backend.get_or_try_init(|| async {
+            self.database.as_storage_backend().await
+                .map_err(|e| anyhow::anyhow!("Failed to create storage backend: {}", e))
+        }).await
+    }
 }
 
 /// Shared application state - manages multiple projects
@@ -110,13 +127,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Load OpenAPI spec from file
-    let openapi_spec = std::fs::read_to_string("openapi.yaml")
-        .unwrap_or_else(|_| {
-            log::warn!("Could not load openapi.yaml, using empty spec");
-            "openapi: 3.0.0\ninfo:\n  title: AvocadoDB\n  version: 0.1.0\npaths: {}".to_string()
-    });
-
     // Request limits
     let max_body_bytes: usize = std::env::var("MAX_BODY_BYTES")
         .ok()
@@ -141,6 +151,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/sessions/:id/compile", post(session_compile_handler))
         .route("/sessions/:id/history", get(session_history_handler))
         .route("/sessions/:id/replay", get(session_replay_handler))
+        // Multi-agent orchestration endpoints
+        .route("/agents", post(register_agent_handler))
+        .route("/agents", get(list_agents_handler))
+        .route("/agents/:agent_id", get(get_agent_handler))
+        .route("/sessions/:id/relations", post(add_agent_relation_handler))
+        .route("/sessions/:id/relations", get(get_agent_relations_handler))
         // API documentation endpoints
         .merge(SwaggerUi::new("/api-docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(cors)
@@ -153,9 +169,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Bind to localhost by default; allow override via BIND_ADDR for explicit exposure
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1".to_string());
     let addr = format!("{}:{}", bind_addr, port);
-    println!("🥑 AvocadoDB daemon v{} listening on http://{}", VERSION, addr);
-    println!("   Managing multiple projects (MongoDB-style)");
-    println!("   Max projects in memory: {}", MAX_PROJECTS_IN_MEMORY);
+    println!("🥑 AvocadoDB v{} listening on http://{}", VERSION, addr);
+    println!("   Multi-project server with LRU caching (max {} projects)", MAX_PROJECTS_IN_MEMORY);
     println!("   API Documentation: http://{}/api-docs", addr.replace("0.0.0.0", "localhost"));
     println!("   OpenAPI Spec: http://{}/api-docs/openapi.json", addr.replace("0.0.0.0", "localhost"));
 
@@ -180,7 +195,9 @@ struct CompileRequest {
     #[serde(default)]
     config: Option<CompilerConfig>,
     /// Optional backend identifier (e.g., "bge-large-1024", "openai-1536")
+    /// Reserved for future embedding backend selection
     #[serde(default)]
+    #[allow(dead_code)]
     backend: Option<String>,
     /// Project path (directory containing .avocado/db.sqlite)
     /// If not provided, uses current working directory
@@ -251,6 +268,7 @@ struct ErrorResponse {
 }
 
 impl ErrorResponse {
+    #[allow(dead_code)]
     fn new(error: impl Into<String>) -> Self {
         Self {
             error: error.into(),
@@ -267,6 +285,7 @@ impl ErrorResponse {
         }
     }
 
+    #[allow(dead_code)]
     fn with_details(error: impl Into<String>, code: impl Into<String>, details: serde_json::Value) -> Self {
         Self {
             error: error.into(),
@@ -331,6 +350,61 @@ struct SessionCompileRequest {
 struct SessionCompileResponse {
     message: Message,
     working_set: WorkingSetOut,
+}
+
+// ===== Multi-Agent Request/Response Types =====
+
+#[derive(Debug, Deserialize)]
+struct RegisterAgentRequest {
+    /// Unique name for the agent (e.g., "moderator", "researcher")
+    name: String,
+    /// Agent's role/persona description
+    role: String,
+    /// LLM model identifier (e.g., "gpt-4", "claude-3", "qwen2.5:32b")
+    model: String,
+    /// Optional system prompt / personality
+    system_prompt: Option<String>,
+    /// Optional DID for decentralized identity
+    did: Option<String>,
+    /// Optional capabilities (e.g., ["web_search", "code_execution"])
+    capabilities: Option<Vec<String>>,
+    /// Project path
+    project: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RegisterAgentResponse {
+    agent: avocado_core::Agent,
+}
+
+#[derive(Debug, Serialize)]
+struct ListAgentsResponse {
+    agents: Vec<avocado_core::Agent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddAgentRelationRequest {
+    /// The message ID that expresses the stance
+    message_id: String,
+    /// The agent ID who is expressing the stance
+    from_agent_id: String,
+    /// The target message ID being responded to
+    target_message_id: String,
+    /// The stance: "agree", "disagree", "neutral", "question"
+    stance: String,
+    /// Project path
+    project: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AddAgentRelationResponse {
+    relation: avocado_core::AgentRelation,
+}
+
+#[derive(Debug, Serialize)]
+struct GetAgentRelationsResponse {
+    relations: avocado_core::AgentRelationSummary,
+    agents: Vec<avocado_core::Agent>,
 }
 
 // ===== Output Types (enriched spans) =====
@@ -748,7 +822,7 @@ async fn get_or_load_project(
         hnsw_index,
         session_manager,
         last_accessed: Arc::new(RwLock::new(Instant::now())),
-        project_path: project_path.clone(),
+        backend: tokio::sync::OnceCell::new(),
     };
 
     // Insert into cache (with LRU eviction)
@@ -1110,6 +1184,122 @@ async fn session_replay_handler(
         .map_err(|e| internal_error(e.to_string()))?;
 
     Ok(Json(replay))
+}
+
+// ===== Multi-Agent Handlers =====
+
+async fn register_agent_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RegisterAgentRequest>,
+) -> Result<Json<RegisterAgentResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let project_index = get_or_load_project(&state, &req.project)
+        .await
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    let agent = avocado_core::Agent {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: req.name,
+        role: req.role,
+        model: req.model,
+        system_prompt: req.system_prompt,
+        did: req.did,
+        capabilities: req.capabilities,
+        metadata: None,
+        created_at: chrono::Utc::now(),
+    };
+
+    let registered = project_index
+        .database
+        .register_agent(&agent)
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    Ok(Json(RegisterAgentResponse { agent: registered }))
+}
+
+async fn list_agents_handler(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<ListAgentsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let project = params.get("project").cloned();
+    let project_index = get_or_load_project(&state, &project)
+        .await
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    let agents = project_index
+        .database
+        .list_agents()
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    Ok(Json(ListAgentsResponse { agents }))
+}
+
+async fn get_agent_handler(
+    State(state): State<Arc<AppState>>,
+    Path(agent_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<RegisterAgentResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let project = params.get("project").cloned();
+    let project_index = get_or_load_project(&state, &project)
+        .await
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    let agent = project_index
+        .database
+        .get_agent(&agent_id)
+        .map_err(|e| internal_error(e.to_string()))?
+        .ok_or_else(|| not_found_error(format!("Agent not found: {}", agent_id)))?;
+
+    Ok(Json(RegisterAgentResponse { agent }))
+}
+
+async fn add_agent_relation_handler(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Json(req): Json<AddAgentRelationRequest>,
+) -> Result<Json<AddAgentRelationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let project_index = get_or_load_project(&state, &req.project)
+        .await
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    // Parse stance
+    let stance = avocado_core::Stance::from_str(&req.stance)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse::with_code(e, "INVALID_STANCE"))))?;
+
+    let relation = project_index
+        .database
+        .add_agent_relation(
+            &session_id,
+            &req.message_id,
+            &req.from_agent_id,
+            &req.target_message_id,
+            stance,
+        )
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    Ok(Json(AddAgentRelationResponse { relation }))
+}
+
+async fn get_agent_relations_handler(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<GetAgentRelationsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let project = params.get("project").cloned();
+    let project_index = get_or_load_project(&state, &project)
+        .await
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    let relations = project_index
+        .database
+        .get_agent_relations(&session_id)
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    let agents = project_index
+        .database
+        .get_session_agents(&session_id)
+        .map_err(|e| internal_error(e.to_string()))?;
+
+    Ok(Json(GetAgentRelationsResponse { relations, agents }))
 }
 
 fn internal_error(msg: String) -> (StatusCode, Json<ErrorResponse>) {
