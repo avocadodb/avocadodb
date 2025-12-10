@@ -32,6 +32,7 @@ pub mod session;
 pub mod approx;
 pub mod eval;
 pub mod diff;
+pub mod storage;
 
 // Re-export commonly used types
 pub use types::{
@@ -43,9 +44,23 @@ pub use types::{
     IngestAction,
     GoldenQuery, EvalResult, EvalSummary,
     WorkingSetDiff, DiffEntry, RerankEntry,
+    // Multi-agent orchestration types
+    Agent, Stance, AgentRelation, AgentMessageMeta, AgentRelationSummary, AgentRelationEntry,
 };
 
-pub use session::{SessionManager, SessionReplay, SessionTurn};
+pub use session::{SessionManager, SessionManagerGeneric, SessionReplay, SessionTurn};
+
+// Re-export compiler functions
+pub use compiler::{compile, compile_with_backend, compile_with_backend_options};
+
+// Re-export storage module types
+pub use storage::{
+    StorageBackend, StorageConfig, SqliteBackend,
+    VectorSearchProvider, VectorSearchResult,
+    create_backend, create_backend_from_env,
+};
+#[cfg(feature = "postgres")]
+pub use storage::PostgresBackend;
 
 /// The version of AvocadoDB
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
