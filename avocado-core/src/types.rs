@@ -215,6 +215,151 @@ impl MessageRole {
     }
 }
 
+// ============================================================================
+// Multi-Agent Orchestration Types
+// ============================================================================
+
+/// An agent participating in multi-agent orchestration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Agent {
+    /// Unique identifier (UUID v4)
+    pub id: String,
+    /// Human-readable name (e.g., "moderator", "researcher")
+    pub name: String,
+    /// Agent's role/persona description
+    pub role: String,
+    /// LLM model identifier (e.g., "gpt-4", "claude-3", "qwen2.5:32b")
+    pub model: String,
+    /// Optional system prompt / personality
+    pub system_prompt: Option<String>,
+    /// Optional DID for decentralized identity
+    pub did: Option<String>,
+    /// Optional capabilities (e.g., ["web_search", "code_execution"])
+    pub capabilities: Option<Vec<String>>,
+    /// Optional metadata
+    pub metadata: Option<serde_json::Value>,
+    /// When agent was registered
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Stance an agent can take toward another message
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Stance {
+    /// Agent agrees with the referenced message
+    Agree,
+    /// Agent disagrees with the referenced message
+    Disagree,
+    /// Agent is neutral/elaborating
+    Neutral,
+    /// Agent is asking for clarification
+    Question,
+}
+
+impl Stance {
+    /// Convert stance to string representation
+    pub fn as_str(&self) -> &str {
+        match self {
+            Stance::Agree => "agree",
+            Stance::Disagree => "disagree",
+            Stance::Neutral => "neutral",
+            Stance::Question => "question",
+        }
+    }
+
+    /// Parse stance from string
+    pub fn from_str(s: &str) -> std::result::Result<Self, String> {
+        match s.to_lowercase().as_str() {
+            "agree" => Ok(Stance::Agree),
+            "disagree" => Ok(Stance::Disagree),
+            "neutral" => Ok(Stance::Neutral),
+            "question" => Ok(Stance::Question),
+            _ => Err(format!("Invalid stance: {}", s)),
+        }
+    }
+}
+
+/// A relation between agents (agreement, disagreement, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRelation {
+    /// Unique identifier
+    pub id: String,
+    /// Session this relation belongs to
+    pub session_id: String,
+    /// ID of the message that created this relation
+    pub message_id: String,
+    /// Agent who expressed the stance
+    pub from_agent_id: String,
+    /// Agent who was referenced (owner of target message)
+    pub to_agent_id: String,
+    /// The stance expressed
+    pub stance: Stance,
+    /// ID of the message being referenced
+    pub target_message_id: String,
+    /// When this relation was created
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Extended message metadata for multi-agent contexts
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentMessageMeta {
+    /// Agent ID (references Agent.id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Agent name (denormalized for convenience)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+    /// Agent model (denormalized for convenience)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_model: Option<String>,
+    /// Message type (e.g., "statement", "question", "summary")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_type: Option<String>,
+    /// Stance toward another message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stance: Option<Stance>,
+    /// ID of message this is replying to / taking stance on
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Citations from web search or documents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citations: Option<Vec<Citation>>,
+    /// Working set hash used to generate this message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_hash: Option<String>,
+    /// Token count of the message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_count: Option<usize>,
+}
+
+/// Summary of agent relations in a session
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentRelationSummary {
+    /// All agreements in the session
+    pub agreements: Vec<AgentRelationEntry>,
+    /// All disagreements in the session
+    pub disagreements: Vec<AgentRelationEntry>,
+    /// Questions asked
+    pub questions: Vec<AgentRelationEntry>,
+}
+
+/// A single relation entry for summaries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRelationEntry {
+    /// Agent who expressed the stance
+    pub from_agent: String,
+    /// Agent model
+    pub from_model: String,
+    /// Agent who was referenced
+    pub to_agent: String,
+    /// Target agent model
+    pub to_model: String,
+    /// The message ID
+    pub message_id: String,
+    /// Target message ID
+    pub target_message_id: String,
+}
+
 /// Association between a session and a working set
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionWorkingSet {
@@ -566,24 +711,31 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Error types for AvocadoDB
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Database operation failed
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
 
+    /// Embedding generation failed
     #[error("Embedding error: {0}")]
     Embedding(String),
 
+    /// File I/O operation failed
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// JSON serialization/deserialization failed
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// Requested resource was not found
     #[error("Not found: {0}")]
     NotFound(String),
 
+    /// Invalid input provided
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    /// Other unclassified error
     #[error("Other error: {0}")]
     Other(#[from] anyhow::Error),
 }
