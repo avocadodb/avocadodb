@@ -223,12 +223,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
-          cache-dependency-path: sdks/typescript/package-lock.json
+          # Note: npm cache disabled - package-lock.json not committed to repo
 
       - name: Install dependencies
         working-directory: sdks/typescript
-        run: npm ci
+        run: npm install
 
       - name: Run npm audit
         working-directory: sdks/typescript
