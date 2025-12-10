@@ -144,7 +144,7 @@ impl VectorIndex {
 
         // Use ef_search = max(k * 2, 50) for good balance of speed and quality
         // Higher ef_search = better recall but slower
-        let ef_search = (k * 2).max(50).min(200);
+        let ef_search = (k * 2).clamp(50, 200);
 
         // Search HNSW for approximate nearest neighbors
         let search_results = hnsw.search(
@@ -169,7 +169,7 @@ impl VectorIndex {
                 let score: f32 = 1.0 - (distance / 2.0);
                 
                 // Ensure score is in valid range [0, 1]
-                let score = score.max(0.0_f32).min(1.0_f32);
+                let score = score.clamp(0.0_f32, 1.0_f32);
                 
                 self.spans.get(idx).map(|span| ScoredSpan {
                     span: span.clone(),

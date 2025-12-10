@@ -6,6 +6,9 @@
 use crate::types::{DiffEntry, RerankEntry, WorkingSet, WorkingSetDiff};
 use std::collections::HashMap;
 
+/// Type alias for span info: (rank, score, artifact_path, (start_line, end_line))
+type SpanInfo<'a> = (usize, f32, &'a str, (usize, usize));
+
 /// Compute diff between two working sets
 ///
 /// # Arguments
@@ -18,7 +21,7 @@ use std::collections::HashMap;
 /// Diff showing added, removed, and reranked spans
 pub fn diff_working_sets(before: &WorkingSet, after: &WorkingSet) -> WorkingSetDiff {
     // Build maps of span_id -> (rank, score, path, lines)
-    let before_map: HashMap<&str, (usize, f32, &str, (usize, usize))> = before
+    let before_map: HashMap<&str, SpanInfo> = before
         .citations
         .iter()
         .enumerate()
@@ -30,7 +33,7 @@ pub fn diff_working_sets(before: &WorkingSet, after: &WorkingSet) -> WorkingSetD
         })
         .collect();
 
-    let after_map: HashMap<&str, (usize, f32, &str, (usize, usize))> = after
+    let after_map: HashMap<&str, SpanInfo> = after
         .citations
         .iter()
         .enumerate()

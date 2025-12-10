@@ -152,7 +152,7 @@ jobs:
 
       - name: Install TypeScript SDK
         working-directory: sdks/typescript
-        run: npm ci
+        run: npm install
 
       - name: Build TypeScript SDK
         working-directory: sdks/typescript

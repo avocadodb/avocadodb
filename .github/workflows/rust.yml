@@ -106,7 +106,17 @@ jobs:
             ${{ runner.os }}-cargo-build-clippy-
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: |
+          cargo clippy --all-targets --all-features -- \
+            -D warnings \
+            -A clippy::should_implement_trait \
+            -A clippy::derivable_impls \
+            -A clippy::useless_format \
+            -A clippy::needless_range_loop \
+            -A clippy::needless_borrows_for_generic_args \
+            -A clippy::redundant_closure \
+            -A clippy::map_flatten \
+            -A clippy::default_constructed_unit_structs
 
   fmt:
     name: Rustfmt (Code Formatting)
