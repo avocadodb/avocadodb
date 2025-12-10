@@ -41,20 +41,26 @@ services:
     networks:
       - avocado-network
 
-  # Optional: PostgreSQL for future support
-  # Uncomment when PostgreSQL backend is implemented
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: avocadodb-postgres
-  #   environment:
-  #     - POSTGRES_DB=avocadodb
-  #     - POSTGRES_USER=avocado
-  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
-  #   volumes:
-  #     - postgres-data:/var/lib/postgresql/data
-  #   networks:
-  #     - avocado-network
-  #   restart: unless-stopped
+  # PostgreSQL with pgvector for production deployments
+  # To use: set AVOCADO_BACKEND=postgres://avocado:changeme@postgres/avocadodb
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: avocadodb-postgres
+    profiles: ["postgres"]  # Only starts with: docker compose --profile postgres up
+    environment:
+      - POSTGRES_DB=avocadodb
+      - POSTGRES_USER=avocado
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - avocado-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avocado -d avocadodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   avocado-network:
@@ -63,5 +69,5 @@ networks:
 volumes:
   avocado-data:
     driver: local
-  # postgres-data:
-  #   driver: local
+  postgres-data:
+    driver: local

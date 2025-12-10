@@ -26,7 +26,9 @@ COPY tests/Cargo.toml ./tests/
 RUN mkdir -p avocado-core/src avocado-server/src tests/src && \
     echo "fn main() {}" > avocado-server/src/main.rs && \
     echo "pub fn dummy() {}" > avocado-core/src/lib.rs && \
-    mkdir -p avocado-core/benches && echo "fn main() {}" > avocado-core/benches/session_bench.rs && \
+    mkdir -p avocado-core/benches && \
+    echo "fn main() {}" > avocado-core/benches/session_bench.rs && \
+    echo "fn main() {}" > avocado-core/benches/warm_cold_bench.rs && \
     mkdir -p avocado-cli/benches && echo "fn main() {}" > avocado-cli/benches/embedding_bench.rs && \
     echo "pub fn dummy() {}" > tests/src/lib.rs
 
@@ -81,7 +83,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Set environment variables
 ENV RUST_LOG=info \
-    PORT=8765
+    PORT=8765 \
+    BIND_ADDR=0.0.0.0
 
 # Run the server
 CMD ["/usr/local/bin/avocado-server"]
