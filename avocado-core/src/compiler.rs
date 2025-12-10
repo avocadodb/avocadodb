@@ -16,6 +16,7 @@
 use crate::db::Database;
 use crate::embedding;
 use crate::index::{cosine_similarity, VectorIndex};
+use crate::storage::StorageBackend;
 use crate::types::{
     ChunkingParams, Citation, CompilerConfig, ExplainCandidate, ExplainPlan, ExplainThresholds,
     ExplainTiming, IndexParams, Manifest, Result, ScoredSpan, Span, WorkingSet,
@@ -25,6 +26,259 @@ use std::collections::HashMap;
 
 /// AvocadoDB version for manifest
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Compile a context working set using a StorageBackend
+///
+/// This is the backend-agnostic version of compile that works with any
+/// StorageBackend implementation (SQLite, PostgreSQL, etc.)
+///
+/// # Arguments
+///
+/// * `query` - The search query
+/// * `config` - Compiler configuration
+/// * `backend` - Storage backend implementation
+/// * `api_key` - Optional OpenAI API key
+///
+/// # Returns
+///
+/// A deterministic WorkingSet with compiled context
+pub async fn compile_with_backend<B: StorageBackend>(
+    query: &str,
+    config: CompilerConfig,
+    backend: &B,
+    api_key: Option<&str>,
+) -> Result<WorkingSet> {
+    compile_with_backend_options(query, config, backend, api_key, false).await
+}
+
+/// Compile a context working set using a StorageBackend with explain option
+///
+/// # Arguments
+///
+/// * `query` - The search query
+/// * `config` - Compiler configuration
+/// * `backend` - Storage backend implementation
+/// * `api_key` - Optional OpenAI API key
+/// * `explain` - Whether to generate explain plan
+///
+/// # Returns
+///
+/// A deterministic WorkingSet with compiled context, optionally with explain plan
+pub async fn compile_with_backend_options<B: StorageBackend>(
+    query: &str,
+    config: CompilerConfig,
+    backend: &B,
+    api_key: Option<&str>,
+    explain: bool,
+) -> Result<WorkingSet> {
+    let start_time = std::time::Instant::now();
+    let mut timing = ExplainTiming::default();
+
+    // Step 1: Embed query
+    let t0 = std::time::Instant::now();
+    let query_embedding = embedding::embed_text(query, None, api_key).await?;
+    timing.embed_query_ms = t0.elapsed().as_millis() as u64;
+
+    // Hash the query embedding for explain plan
+    let query_embedding_hash = if explain {
+        let mut hasher = Sha256::new();
+        for f in &query_embedding {
+            hasher.update(f.to_le_bytes());
+        }
+        format!("{:x}", hasher.finalize())
+    } else {
+        String::new()
+    };
+
+    // Step 2: Semantic search using backend's vector search
+    let t0 = std::time::Instant::now();
+    let vector_search = backend.get_vector_search().await?;
+    let semantic_results = vector_search.search(&query_embedding, 50).await?;
+    timing.semantic_search_ms = t0.elapsed().as_millis() as u64;
+
+    // Convert to ScoredSpan format
+    let semantic_spans: Vec<ScoredSpan> = semantic_results
+        .into_iter()
+        .map(|r| ScoredSpan { span: r.span, score: r.score })
+        .collect();
+
+    // Capture semantic candidates for explain
+    let semantic_candidates = if explain {
+        scored_spans_to_candidates_async(&semantic_spans, backend).await
+    } else {
+        vec![]
+    };
+
+    // Step 3: Lexical search using backend
+    let t0 = std::time::Instant::now();
+    let lexical_spans = backend.search_spans(query, 20).await?;
+    timing.lexical_search_ms = t0.elapsed().as_millis() as u64;
+
+    // Convert lexical to ScoredSpan (with decreasing scores by rank)
+    let lexical_scored: Vec<ScoredSpan> = lexical_spans
+        .into_iter()
+        .enumerate()
+        .map(|(i, span)| ScoredSpan {
+            span,
+            score: 1.0 - (i as f32 * 0.05),
+        })
+        .collect();
+
+    let lexical_candidates = if explain {
+        scored_spans_to_candidates_async(&lexical_scored, backend).await
+    } else {
+        vec![]
+    };
+
+    // Step 4: Hybrid fusion
+    let t0 = std::time::Instant::now();
+    let mut candidates = hybrid_fusion(
+        semantic_spans,
+        lexical_scored,
+        config.semantic_weight,
+        config.lexical_weight,
+    );
+    timing.fusion_ms = t0.elapsed().as_millis() as u64;
+
+    let fused_candidates = if explain {
+        scored_spans_to_candidates_async(&candidates, backend).await
+    } else {
+        vec![]
+    };
+
+    // Step 5: MMR diversification
+    let t0 = std::time::Instant::now();
+    if config.enable_mmr {
+        candidates = apply_mmr(candidates, &query_embedding, config.mmr_lambda);
+    }
+    timing.mmr_ms = t0.elapsed().as_millis() as u64;
+
+    let mmr_candidates = if explain {
+        scored_spans_to_candidates_async(&candidates, backend).await
+    } else {
+        vec![]
+    };
+
+    // Step 6: Token budget packing
+    let t0 = std::time::Instant::now();
+    let selected_spans = pack_token_budget(candidates, config.token_budget);
+    timing.packing_ms = t0.elapsed().as_millis() as u64;
+
+    let packed_candidates = if explain {
+        scored_spans_to_candidates_async(&selected_spans, backend).await
+    } else {
+        vec![]
+    };
+
+    // Step 7: Deterministic sort
+    let sorted_scored_spans = deterministic_sort_with_scores(selected_spans);
+
+    let final_candidates = if explain {
+        scored_spans_to_candidates_async(&sorted_scored_spans, backend).await
+    } else {
+        vec![]
+    };
+
+    // Step 8: Build context with citations
+    let t0 = std::time::Instant::now();
+    let (context_text, citations, sorted_spans) = build_context_with_backend(&sorted_scored_spans, backend).await?;
+    timing.build_context_ms = t0.elapsed().as_millis() as u64;
+
+    let tokens_used = count_tokens(&context_text);
+    let compilation_time_ms = start_time.elapsed().as_millis() as u64;
+    timing.total_ms = compilation_time_ms;
+
+    // Build manifest
+    let context_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(context_text.as_bytes());
+        format!("{:x}", hasher.finalize())
+    };
+
+    let embedding_model = sorted_spans
+        .first()
+        .and_then(|s| s.embedding_model.clone())
+        .unwrap_or_else(|| "all-MiniLM-L6-v2".to_string());
+
+    let embedding_dimension = sorted_spans
+        .first()
+        .and_then(|s| s.embedding.as_ref().map(|e| e.len()))
+        .unwrap_or(384);
+
+    let manifest = Manifest {
+        avocado_version: VERSION.to_string(),
+        tokenizer: "cl100k_base".to_string(),
+        embedding_model,
+        embedding_dimension,
+        chunking: ChunkingParams::default(),
+        index: IndexParams::default(),
+        context_hash,
+    };
+
+    // Build explain plan if requested
+    let explain_plan = if explain {
+        Some(ExplainPlan {
+            query: query.to_string(),
+            query_embedding_hash,
+            semantic_candidates,
+            lexical_candidates,
+            fused_candidates,
+            mmr_candidates,
+            packed_candidates,
+            final_candidates,
+            timing,
+            thresholds: ExplainThresholds {
+                semantic_k: 50,
+                lexical_k: 20,
+                semantic_weight: config.semantic_weight,
+                lexical_weight: config.lexical_weight,
+                mmr_lambda: config.mmr_lambda,
+                mmr_enabled: config.enable_mmr,
+                token_budget: config.token_budget,
+            },
+        })
+    } else {
+        None
+    };
+
+    Ok(WorkingSet {
+        text: context_text,
+        spans: sorted_spans,
+        citations,
+        tokens_used,
+        query: query.to_string(),
+        compilation_time_ms,
+        manifest: Some(manifest),
+        explain: explain_plan,
+    })
+}
+
+/// Convert scored spans to explain candidates (async version for StorageBackend)
+async fn scored_spans_to_candidates_async<B: StorageBackend>(
+    spans: &[ScoredSpan],
+    backend: &B,
+) -> Vec<ExplainCandidate> {
+    let mut candidates = Vec::with_capacity(spans.len());
+    for (idx, scored) in spans.iter().enumerate() {
+        let artifact_path = backend
+            .get_artifact(&scored.span.artifact_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|a| a.path)
+            .unwrap_or_else(|| "unknown".to_string());
+
+        candidates.push(ExplainCandidate {
+            span_id: scored.span.id.clone(),
+            artifact_path,
+            lines: (scored.span.start_line, scored.span.end_line),
+            score: scored.score,
+            tokens: scored.span.token_count,
+            rank: idx + 1,
+        });
+    }
+    candidates
+}
 
 /// Compile a context working set for a query
 ///
@@ -582,6 +836,7 @@ fn deterministic_sort_with_scores(mut spans: Vec<ScoredSpan>) -> Vec<ScoredSpan>
 /// # Returns
 ///
 /// Deterministically sorted spans
+#[allow(dead_code)]
 fn deterministic_sort(mut spans: Vec<ScoredSpan>) -> Vec<Span> {
     // Sort by (artifact_id, start_line) for deterministic ordering
     spans.sort_by(|a, b| {
@@ -643,6 +898,63 @@ fn build_context(scored_spans: &[ScoredSpan], db: &Database) -> Result<(String, 
     let context_text = context_parts.join("\n\n---\n\n");
 
     Ok((context_text, citations))
+}
+
+/// Build context text and citations from scored spans using a StorageBackend
+///
+/// # Arguments
+///
+/// * `scored_spans` - Selected spans with scores
+/// * `backend` - Storage backend implementation
+///
+/// # Returns
+///
+/// (context_text, citations, spans)
+async fn build_context_with_backend<B: StorageBackend>(
+    scored_spans: &[ScoredSpan],
+    backend: &B,
+) -> Result<(String, Vec<Citation>, Vec<Span>)> {
+    let mut context_parts = Vec::new();
+    let mut citations = Vec::new();
+    let mut spans = Vec::new();
+
+    for (idx, scored_span) in scored_spans.iter().enumerate() {
+        let span = &scored_span.span;
+
+        // Get artifact path for citation
+        let artifact = backend.get_artifact(&span.artifact_id).await?;
+        let artifact_path = artifact
+            .as_ref()
+            .map(|a| a.path.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Add citation marker
+        let citation_marker = format!("[{}]", idx + 1);
+
+        // Build context chunk with citation
+        let chunk = format!(
+            "{} {}\nLines {}-{}\n\n{}",
+            citation_marker, artifact_path, span.start_line, span.end_line, span.text
+        );
+
+        context_parts.push(chunk);
+
+        // Create citation (preserve score from ScoredSpan)
+        citations.push(Citation {
+            span_id: span.id.clone(),
+            artifact_id: span.artifact_id.clone(),
+            artifact_path,
+            start_line: span.start_line,
+            end_line: span.end_line,
+            score: scored_span.score,
+        });
+
+        spans.push(span.clone());
+    }
+
+    let context_text = context_parts.join("\n\n---\n\n");
+
+    Ok((context_text, citations, spans))
 }
 
 use std::sync::OnceLock;
